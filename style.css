@@ -2,7 +2,7 @@
  * Read / Write AI Test
  *
  * Responsibility:
- *   Provides the visual presentation for Test 3B.3.3.3,
+ *   Provides the visual presentation for Test 3B.3.3.4,
  *   including study review, persistence status, and the map.
  */
 
@@ -125,12 +125,15 @@ body {
     font-size: 1rem;
 }
 
-.sub-label {
-    margin-top: 12px;
-    margin-bottom: 7px;
-    font-weight: 600;
-    font-size: 0.85rem;
-    color: #666;
+.city-state-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    gap: 10px;
+    align-items: stretch;
+}
+
+.city-state-row select {
+    width: 150px;
 }
 
 .input-with-unit {
@@ -355,6 +358,15 @@ footer {
 
     .form-group.full-width {
         grid-column: auto;
+    }
+
+    .city-state-row {
+        grid-template-columns: minmax(0, 1fr) 130px;
+        gap: 8px;
+    }
+
+    .city-state-row select {
+        width: 130px;
     }
 
     .setup-actions {

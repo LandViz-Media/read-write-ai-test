@@ -2,7 +2,7 @@
  * Read / Write AI Test
  *
  * Responsibility:
- *   Controls the browser-side Study Setup workflow for Test 3B.3.3.3:
+ *   Controls the browser-side Study Setup workflow for Test 3B.3.3.4:
  *   - validate user input
  *   - resolve U.S. cities/places using Census TIGERweb
  *   - create the buffered study-area extent
@@ -25,7 +25,7 @@
    CONFIGURATION
    ============================================================ */
 
-const APP_VERSION = "3B.3.3.3";
+const APP_VERSION = "3B.3.3.4";
 
 const API_BASE_URL = "https://read-write-ai-test-api.cjseeger.workers.dev";
 const STUDY_CREATE_ENDPOINT = "/api/v1/studies";
@@ -852,6 +852,23 @@ async function saveStudyToWorker(study) {
         if (error.name === "AbortError") {
             throw new Error(
                 `The Worker request timed out after ${WORKER_REQUEST_TIMEOUT_MS / 1000} seconds.`
+            );
+        }
+
+        /*
+         * Browsers report fetch/CORS/preflight failures as a generic
+         * NetworkError/TypeError rather than exposing the underlying HTTP
+         * response. Give the user a useful diagnostic without hiding a real
+         * Worker error when the Worker did respond.
+         */
+        const networkMessage = String(error?.message || "");
+        if (
+            error?.name === "TypeError" &&
+            /fetch|network|failed/i.test(networkMessage)
+        ) {
+            throw new Error(
+                "The browser could not reach the Cloudflare Worker. " +
+                "This usually indicates a Worker endpoint, CORS, or preflight configuration problem."
             );
         }
 
