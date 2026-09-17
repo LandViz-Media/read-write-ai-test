@@ -3,117 +3,307 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <title>Read / Write AI Test</title>
+
+    <!-- Leaflet CSS -->
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIINfQ3J2N7L8h6Q2Qm4sV4JQYV9xQ0W0w="
+        crossorigin=""
+    >
+
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
+
 <main class="container">
+
     <header class="page-header">
         <h1>Read / Write AI Test</h1>
-        <p class="subtitle">Test 3 — GitHub App + Cloudflare Worker</p>
+        <p class="subtitle">
+            Test 3 — GitHub App + Cloudflare Worker
+        </p>
     </header>
 
+
+    <!-- ==================================================
+         STUDY SETUP
+         ================================================== -->
+
     <section class="card">
+
         <h2>Study Setup</h2>
+
         <p class="section-description">
-            Define a study using two neighboring cities and a buffer around their combined geographic extent.
+            Define a study using two neighboring cities and a
+            buffer around their combined geographic extent.
         </p>
 
         <div class="form-grid">
+
             <div class="form-group full-width">
-                <label for="studyName">Study Name</label>
-                <input type="text" id="studyName" name="studyName"
-                       placeholder="e.g., Ogden–Boone School Study">
+                <label for="studyName">
+                    Study Name
+                </label>
+
+                <input
+                    type="text"
+                    id="studyName"
+                    name="studyName"
+                    placeholder="e.g., Ogden–Boone School Study"
+                >
             </div>
 
-            <div class="form-group">
-                <label for="city1">City 1</label>
-                <input type="text" id="city1" name="city1"
-                       placeholder="e.g., Ogden, Iowa">
-            </div>
 
             <div class="form-group">
-                <label for="city2">City 2</label>
-                <input type="text" id="city2" name="city2"
-                       placeholder="e.g., Boone, Iowa">
+                <label for="city1">
+                    City 1
+                </label>
+
+                <input
+                    type="text"
+                    id="city1"
+                    name="city1"
+                    placeholder="e.g., Ogden, Iowa"
+                    autocomplete="address-level2"
+                >
             </div>
+
+
+            <div class="form-group">
+                <label for="city2">
+                    City 2
+                </label>
+
+                <input
+                    type="text"
+                    id="city2"
+                    name="city2"
+                    placeholder="e.g., Boone, Iowa"
+                    autocomplete="address-level2"
+                >
+            </div>
+
 
             <div class="form-group buffer-group">
-                <label for="bufferDistance">Buffer Distance</label>
+
+                <label for="bufferDistance">
+                    Buffer Distance
+                </label>
+
                 <div class="input-with-unit">
-                    <input type="number" id="bufferDistance" name="bufferDistance"
-                           value="5.0" min="0" max="25" step="0.1">
-                    <span class="unit">miles</span>
+
+                    <input
+                        type="number"
+                        id="bufferDistance"
+                        name="bufferDistance"
+                        value="5.0"
+                        min="0"
+                        max="25"
+                        step="0.1"
+                    >
+
+                    <span class="unit">
+                        miles
+                    </span>
+
                 </div>
-                <div class="field-help">0–25 miles, in 0.1-mile increments</div>
+
+                <div class="field-help">
+                    0–25 miles, in 0.1-mile increments
+                </div>
+
             </div>
+
         </div>
+
 
         <div class="setup-actions">
-            <button id="createStudyAreaButton" class="test-button primary" type="button">
+
+            <button
+                id="createStudyAreaButton"
+                class="test-button primary"
+                type="button"
+            >
                 Create Study Area
             </button>
+
         </div>
+
     </section>
 
+
+    <!-- ==================================================
+         STUDY AREA MAP
+         ================================================== -->
+
     <section class="card">
+
         <div class="map-header">
+
             <div>
                 <h2>Study Area</h2>
-                <p id="mapStatus" class="map-status">
+
+                <p
+                    id="mapStatus"
+                    class="map-status"
+                >
                     Enter two cities and create a study area.
                 </p>
             </div>
+
         </div>
 
-        <div id="map" class="map-placeholder">
-            <div class="map-placeholder-content">
-                <div class="map-icon">MAP</div>
-                <p>Map will appear here after the cities are geocoded.</p>
-                <span>Test 3B.2 will add the interactive map.</span>
+
+        <div id="map" class="map-container"></div>
+
+
+        <div
+            id="locationDetails"
+            class="location-details"
+            hidden
+        >
+
+            <div class="location-detail">
+                <strong>City 1</strong>
+                <span id="city1Resolved">—</span>
             </div>
+
+            <div class="location-detail">
+                <strong>City 2</strong>
+                <span id="city2Resolved">—</span>
+            </div>
+
+            <div class="location-detail">
+                <strong>Study Area</strong>
+                <span id="studyAreaDimensions">—</span>
+            </div>
+
         </div>
+
     </section>
 
+
+    <!-- ==================================================
+         STUDY ACTIONS
+         ================================================== -->
+
     <section class="card">
+
         <h2>Study Actions</h2>
+
         <p class="section-description">
-            Review the study area before saving or continuing to OSM data collection.
+            Review the study area before saving or continuing
+            to OSM data collection.
         </p>
 
+
         <div class="study-actions">
-            <button id="saveStudyButton" class="test-button" type="button" disabled>
+
+            <button
+                id="saveStudyButton"
+                class="test-button"
+                type="button"
+                disabled
+            >
                 Save Study
             </button>
-            <button id="continueButton" class="test-button primary" type="button" disabled>
+
+
+            <button
+                id="continueButton"
+                class="test-button primary"
+                type="button"
+                disabled
+            >
                 Continue to OSM Data Collection →
             </button>
+
         </div>
+
     </section>
 
+
+    <!-- ==================================================
+         TEST RESULTS
+         ================================================== -->
+
     <section class="card">
+
         <h2>Test Results</h2>
+
         <div id="results">
+
             <div class="result waiting">
-                <div class="result-title">Waiting for tests...</div>
-                <div class="result-message">The Study Setup interface is ready.</div>
+
+                <div class="result-title">
+                    Waiting for study setup...
+                </div>
+
+                <div class="result-message">
+                    Test 3B.2 adds geocoding and an interactive map.
+                </div>
+
             </div>
+
         </div>
+
     </section>
+
+
+    <!-- ==================================================
+         SECURITY
+         ================================================== -->
 
     <section class="card">
+
         <h2>Security</h2>
+
         <ul>
-            <li>No GitHub token is stored in this browser application.</li>
-            <li>The GitHub App private key remains in Cloudflare.</li>
-            <li>The browser communicates with the Worker only when a server-side operation is needed.</li>
-            <li>Public, deterministic operations will be performed in the browser when appropriate.</li>
+
+            <li>
+                No GitHub token is stored in this browser
+                application.
+            </li>
+
+            <li>
+                The GitHub App private key remains in
+                Cloudflare.
+            </li>
+
+            <li>
+                City geocoding is performed client-side using
+                the public Nominatim service.
+            </li>
+
+            <li>
+                The study is not sent to the Worker during
+                Test 3B.2.
+            </li>
+
         </ul>
+
     </section>
 
-    <footer><p>Test 3 — LandViz Media</p></footer>
+
+    <footer>
+        <p>Test 3 — LandViz Media</p>
+    </footer>
+
 </main>
 
+
+<!-- Leaflet JavaScript -->
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+></script>
+
 <script src="app.js"></script>
+
 </body>
 </html>
