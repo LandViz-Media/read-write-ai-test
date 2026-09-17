@@ -7,8 +7,8 @@
  *   persistence of the study through the
  *   Cloudflare Worker.
  *
- * Test 3B.3:
- *   - Preserve the Test 3B.2 geocoding and map workflow.
+ * Test 3B.3.3:
+ *   - Replace Nominatim city geocoding with validated U.S. Census place resolution.
  *   - Enable Save Study after the study area has been created.
  *   - Generate a stable study ID in the browser.
  *   - Send the study to the Worker through the
@@ -86,10 +86,10 @@ const resultsContainer =
 /*
  * Application API endpoint.
  *
- * The browser talks only to the Cloudflare Worker. It never
+ * The browser talks to the Cloudflare Worker only for private GitHub persistence. It never
  * receives the GitHub App private key or an installation token.
  *
- * Test 3B.3 expects the Worker to expose:
+ * Test 3B.3.3 expects the Worker to expose:
  *
  *   POST /api/v1/studies
  *
@@ -113,8 +113,10 @@ const STUDY_CREATE_ENDPOINT =
  * Public geocoder.
  */
 
-const NOMINATIM_URL =
-    "https://nominatim.openstreetmap.org/search";
+/*
+ * Census place resolution is performed directly from the browser.
+ * See the CENSUS PLACE RESOLUTION section below.
+ */
 
 
 /*
@@ -310,15 +312,233 @@ function showResult(
 
 
 /* ============================================================
-   GEOCODING
+   CENSUS PLACE RESOLUTION
    ============================================================ */
 
-/**
- * Geocode a city using Nominatim.
+/*
+ * The user enters a city/place, not a street address. The Census
+ * Geocoder is an address geocoder and requires a street address;
+ * it is therefore not the correct Census service for city-only
+ * input. Census TIGERweb exposes the current Incorporated Places,
+ * Census Designated Places, and Consolidated Cities layers with
+ * place names and representative coordinates.
  *
- * The search is restricted to U.S. settlements and prefers an
- * exact city/town/village match in Iowa. This helps prevent a
- * query such as "Boone, Iowa" from resolving to Boone County.
+ * We use those Census place layers directly from the browser. This
+ * keeps the operation client-side, avoids a Worker call, and avoids
+ * hard-coding Iowa. The Worker remains responsible only for the
+ * private GitHub persistence operation.
+ *
+ * Census Geocoder documentation:
+ *   https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html
+ *
+ * Census TIGERweb REST service:
+ *   https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb
+ */
+
+const CENSUS_TIGERWEB_BASE_URL =
+    "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer";
+
+/* Current 2026 place layers. */
+const CENSUS_PLACE_LAYERS = [
+    {
+        id: 4,
+        label: "Incorporated Place"
+    },
+    {
+        id: 5,
+        label: "Census Designated Place"
+    },
+    {
+        id: 3,
+        label: "Consolidated City"
+    }
+];
+
+const STATE_FIPS = {
+    AL: "01", AK: "02", AZ: "04", AR: "05", CA: "06",
+    CO: "08", CT: "09", DE: "10", DC: "11", FL: "12",
+    GA: "13", HI: "15", ID: "16", IL: "17", IN: "18",
+    IA: "19", KS: "20", KY: "21", LA: "22", ME: "23",
+    MD: "24", MA: "25", MI: "26", MN: "27", MS: "28",
+    MO: "29", MT: "30", NE: "31", NV: "32", NH: "33",
+    NJ: "34", NM: "35", NY: "36", NC: "37", ND: "38",
+    OH: "39", OK: "40", OR: "41", PA: "42", RI: "44",
+    SC: "45", SD: "46", TN: "47", TX: "48", UT: "49",
+    VT: "50", VA: "51", WA: "53", WV: "54", WI: "55",
+    WY: "56", PR: "72"
+};
+
+const STATE_NAMES = {
+    ALABAMA: "AL", ALASKA: "AK", ARIZONA: "AZ", ARKANSAS: "AR",
+    CALIFORNIA: "CA", COLORADO: "CO", CONNECTICUT: "CT", DELAWARE: "DE",
+    DISTRICTOFCOLUMBIA: "DC", FLORIDA: "FL", GEORGIA: "GA", HAWAII: "HI",
+    IDAHO: "ID", ILLINOIS: "IL", INDIANA: "IN", IOWA: "IA", KANSAS: "KS",
+    KENTUCKY: "KY", LOUISIANA: "LA", MAINE: "ME", MARYLAND: "MD",
+    MASSACHUSETTS: "MA", MICHIGAN: "MI", MINNESOTA: "MN", MISSISSIPPI: "MS",
+    MISSOURI: "MO", MONTANA: "MT", NEBRASKA: "NE", NEVADA: "NV",
+    NEWHAMPSHIRE: "NH", NEWJERSEY: "NJ", NEWMEXICO: "NM", NEWYORK: "NY",
+    NORTHCAROLINA: "NC", NORTHDAKOTA: "ND", OHIO: "OH", OKLAHOMA: "OK",
+    OREGON: "OR", PENNSYLVANIA: "PA", RHODEISLAND: "RI", SOUTHCAROLINA: "SC",
+    SOUTHDAKOTA: "SD", TENNESSEE: "TN", TEXAS: "TX", UTAH: "UT",
+    VERMONT: "VT", VIRGINIA: "VA", WASHINGTON: "WA", WESTVIRGINIA: "WV",
+    WISCONSIN: "WI", WYOMING: "WY", PUERTORICO: "PR"
+};
+
+/**
+ * Parse a city/place input such as "Jefferson, IA" or
+ * "Jefferson, Iowa". A state is required because place names
+ * are not unique nationally.
+ *
+ * @param {string} query
+ * @returns {{city: string, stateAbbr: string, stateName: string, stateFips: string}}
+ */
+function parseCityInput(query) {
+
+    const parts = String(query)
+        .split(",")
+        .map(value => value.trim())
+        .filter(Boolean);
+
+    if (parts.length < 2) {
+        throw new Error(
+            `Enter the city and state, for example "Jefferson, IA".`
+        );
+    }
+
+    const city = parts[0];
+    const stateInput = parts.slice(1).join(" ");
+    const normalizedState = stateInput
+        .toUpperCase()
+        .replace(/[^A-Z]/g, "");
+
+    let stateAbbr = normalizedState;
+
+    if (STATE_NAMES[normalizedState]) {
+        stateAbbr = STATE_NAMES[normalizedState];
+    }
+
+    if (!STATE_FIPS[stateAbbr]) {
+        throw new Error(
+            `"${stateInput}" is not a recognized U.S. state or territory abbreviation/name.`
+        );
+    }
+
+    const stateName = Object.entries(STATE_NAMES)
+        .find(([, abbr]) => abbr === stateAbbr)?.[0] || stateAbbr;
+
+    return {
+        city,
+        stateAbbr,
+        stateName,
+        stateFips: STATE_FIPS[stateAbbr]
+    };
+}
+
+/**
+ * Query a Census TIGERweb place layer.
+ *
+ * @param {number} layerId
+ * @param {string} city
+ * @param {string} stateFips
+ * @returns {Promise<Array>}
+ */
+async function fetchCensusPlaceLayer(layerId, city, stateFips) {
+
+    const url = new URL(
+        `${CENSUS_TIGERWEB_BASE_URL}/${layerId}/query`
+    );
+
+    const escapedCity = city
+        .replace(/'/g, "''")
+        .toUpperCase();
+
+    url.searchParams.set(
+        "where",
+        `BASENAME = '${escapedCity}' AND STATE = '${stateFips}'`
+    );
+    url.searchParams.set(
+        "outFields",
+        "BASENAME,NAME,STATE,GEOID,PLACE,PLACECC,CENTLAT,CENTLON,INTPTLAT,INTPTLON"
+    );
+    url.searchParams.set("returnGeometry", "false");
+    url.searchParams.set("f", "json");
+    url.searchParams.set("_cb", Date.now().toString());
+
+    const response = await fetch(url.toString(), {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+            "Accept": "application/json"
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error(
+            `Census place lookup failed with HTTP ${response.status}.`
+        );
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+        throw new Error(
+            data.error.message || "The Census place service returned an error."
+        );
+    }
+
+    return Array.isArray(data.features)
+        ? data.features
+        : [];
+}
+
+/**
+ * Validate and rank Census place features.
+ *
+ * Only an exact Census BASENAME match in the requested state is
+ * accepted. This prevents a county or other administrative feature
+ * from being substituted for the requested city/place.
+ *
+ * @param {Array} features
+ * @param {string} requestedCity
+ * @returns {object|null}
+ */
+function selectCensusPlaceResult(features, requestedCity) {
+
+    const requested = normalizePlaceName(requestedCity);
+
+    const matches = features
+        .map(feature => feature.attributes || {})
+        .filter(attributes => {
+            const basename = normalizePlaceName(attributes.BASENAME || "");
+            return basename === requested;
+        });
+
+    if (matches.length === 0) {
+        return null;
+    }
+
+    matches.sort((a, b) => {
+        const score = attributes => {
+            const placecc = String(attributes.PLACECC || "").toUpperCase();
+            let value = 0;
+
+            /* Incorporated places are preferred when both layers
+             * happen to represent the same named place. */
+            if (placecc.startsWith("C1")) value += 20;
+            if (attributes.INTPTLAT && attributes.INTPTLON) value += 10;
+            if (attributes.CENTLAT && attributes.CENTLON) value += 5;
+
+            return value;
+        };
+
+        return score(b) - score(a);
+    });
+
+    return matches[0];
+}
+
+/**
+ * Resolve a city/place against current Census TIGERweb place data.
  *
  * @param {string} query
  * @returns {Promise<object>}
@@ -326,313 +546,51 @@ function showResult(
 async function geocodeCity(query) {
 
     const parsed = parseCityInput(query);
-    const requestedName = normalizePlaceName(parsed.city);
+    const layerErrors = [];
 
-
-    /*
-     * Nominatim supports both structured and free-form searches.
-     * We use several increasingly permissive searches, but every
-     * result still has to pass selectSettlementResult(). This means
-     * a county can never silently replace a city.
-     */
-
-    const searchRequests = [];
-
-
-    /* 1. Structured city/state search. */
-    const structuredUrl =
-        new URL(NOMINATIM_URL);
-
-    structuredUrl.searchParams.set("city", parsed.city);
-    structuredUrl.searchParams.set("state", "Iowa");
-    structuredUrl.searchParams.set("country", "United States");
-    structuredUrl.searchParams.set("countrycodes", "us");
-    structuredUrl.searchParams.set("format", "jsonv2");
-    structuredUrl.searchParams.set("limit", "10");
-    structuredUrl.searchParams.set("addressdetails", "1");
-    structuredUrl.searchParams.set("featuretype", "settlement");
-
-    searchRequests.push(structuredUrl);
-
-
-    /* 2. Free-form settlement search. */
-    const freeFormSettlementUrl =
-        new URL(NOMINATIM_URL);
-
-    freeFormSettlementUrl.searchParams.set(
-        "q",
-        `${parsed.city}, Iowa, United States`
-    );
-    freeFormSettlementUrl.searchParams.set("format", "jsonv2");
-    freeFormSettlementUrl.searchParams.set("limit", "10");
-    freeFormSettlementUrl.searchParams.set("addressdetails", "1");
-    freeFormSettlementUrl.searchParams.set("featuretype", "settlement");
-    freeFormSettlementUrl.searchParams.set("countrycodes", "us");
-
-    searchRequests.push(freeFormSettlementUrl);
-
-
-    /*
-     * 3. Final address-layer fallback. Some legitimate Iowa towns
-     * can be classified differently by OSM/Nominatim. We therefore
-     * allow the address layer as a final fallback, but still require
-     * an exact place-name match and Iowa settlement classification.
-     */
-    const addressLayerUrl =
-        new URL(NOMINATIM_URL);
-
-    addressLayerUrl.searchParams.set(
-        "q",
-        `${parsed.city}, Iowa, United States`
-    );
-    addressLayerUrl.searchParams.set("format", "jsonv2");
-    addressLayerUrl.searchParams.set("limit", "20");
-    addressLayerUrl.searchParams.set("addressdetails", "1");
-    addressLayerUrl.searchParams.set("layer", "address");
-    addressLayerUrl.searchParams.set("countrycodes", "us");
-
-    searchRequests.push(addressLayerUrl);
-
-
-    for (const url of searchRequests) {
-
-        const results =
-            await fetchNominatimResults(url);
-
-        const selected =
-            selectSettlementResult(
-                results,
-                requestedName
+    for (const layer of CENSUS_PLACE_LAYERS) {
+        try {
+            const features = await fetchCensusPlaceLayer(
+                layer.id,
+                parsed.city,
+                parsed.stateFips
             );
 
-        if (selected) {
-            return selected;
+            const selected = selectCensusPlaceResult(
+                features,
+                parsed.city
+            );
+
+            if (selected) {
+                return {
+                    ...selected,
+                    censusLayer: layer.id,
+                    censusLayerLabel: layer.label,
+                    requestedCity: parsed.city,
+                    requestedState: parsed.stateAbbr,
+                    requestedStateName: parsed.stateName
+                };
+            }
+        } catch (error) {
+            layerErrors.push(error.message);
         }
     }
 
+    if (layerErrors.length === CENSUS_PLACE_LAYERS.length) {
+        throw new Error(
+            `The Census TIGERweb place service could not be queried for "${parsed.city}, ${parsed.stateAbbr}". ` +
+            layerErrors[0]
+        );
+    }
 
     throw new Error(
-        `Nominatim did not return a valid Iowa settlement named "${parsed.city}". ` +
-        `The search was intentionally rejected rather than using a county or other administrative feature.`
+        `Census did not return a validated incorporated place, census-designated place, or consolidated city named ` +
+        `"${parsed.city}" in ${parsed.stateAbbr}. The result was rejected rather than substituting a county or other administrative feature.`
     );
 }
 
 /**
- * Parse a city input such as "Jefferson, IA" or "Jefferson, Iowa".
- *
- * The prototype is intentionally Iowa-specific because this study
- * workflow currently targets Iowa Department of Education data.
- *
- * @param {string} query
- * @returns {{city: string}}
- */
-function parseCityInput(query) {
-
-    const parts =
-        query
-            .split(",")
-            .map(value => value.trim())
-            .filter(Boolean);
-
-
-    if (parts.length === 0) {
-        throw new Error("Please enter a city name.");
-    }
-
-
-    return {
-        city: parts[0]
-    };
-}
-
-
-/**
- * Request and parse a Nominatim response.
- *
- * @param {URL} url
- * @returns {Promise<Array>}
- */
-async function fetchNominatimResults(url) {
-
-    const response =
-        await fetch(url.toString(), {
-            method: "GET",
-            cache: "no-store",
-            headers: {
-                "Accept": "application/json"
-            }
-        });
-
-
-    if (!response.ok) {
-        throw new Error(
-            `Geocoding request failed with HTTP ${response.status}.`
-        );
-    }
-
-
-    const results =
-        await response.json();
-
-
-    return Array.isArray(results)
-        ? results
-        : [];
-}
-
-
-/**
- * Select only a true settlement matching the requested name.
- *
- * This deliberately rejects county/admin results. For a research
- * workflow, silently substituting "Jefferson County" for the city
- * "Jefferson" is worse than stopping and asking the user to correct
- * an ambiguous geocoding result.
- *
- * @param {Array} results
- * @param {string} requestedName
- * @returns {object|null}
- */
-function selectSettlementResult(results, requestedName) {
-
-    const settlements =
-        results.filter(result => {
-
-            const type =
-                String(result.type || "")
-                    .trim()
-                    .toLowerCase();
-
-            const addresstype =
-                String(result.addresstype || "")
-                    .trim()
-                    .toLowerCase();
-
-            const resultClass =
-                String(result.class || "")
-                    .trim()
-                    .toLowerCase();
-
-            const name =
-                normalizePlaceName(result.name || "");
-
-            const address =
-                result.address || {};
-
-            const addressCity =
-                normalizePlaceName(
-                    address.city ||
-                    address.town ||
-                    address.village ||
-                    address.municipality ||
-                    address.hamlet ||
-                    ""
-                );
-
-            const state =
-                String(address.state || "")
-                    .trim()
-                    .toLowerCase();
-
-            const countryCode =
-                String(address.country_code || "")
-                    .trim()
-                    .toLowerCase();
-
-            const iowa =
-                state === "iowa" ||
-                String(address["ISO3166-2-lvl4"] || "")
-                    .toUpperCase() === "US-IA";
-
-            const us =
-                countryCode === "us" ||
-                /united states/i.test(
-                    String(address.country || "")
-                );
-
-            const exactName =
-                name === requestedName ||
-                addressCity === requestedName;
-
-            const settlementType = [
-                "city",
-                "town",
-                "village",
-                "hamlet",
-                "municipality",
-                "locality"
-            ].includes(type);
-
-            const settlementAddressType = [
-                "city",
-                "town",
-                "village",
-                "municipality",
-                "hamlet",
-                "locality"
-            ].includes(addresstype);
-
-            const placeClass =
-                resultClass === "place";
-
-            const validSettlement =
-                settlementType ||
-                settlementAddressType ||
-                (placeClass && exactName);
-
-            return (
-                exactName &&
-                validSettlement &&
-                iowa &&
-                us
-            );
-        });
-
-
-    /* Prefer an actual place feature over an address fallback. */
-    settlements.sort((a, b) => {
-        const score = result => {
-            const type = String(result.type || "").toLowerCase();
-            const addresstype = String(result.addresstype || "").toLowerCase();
-            let value = 0;
-
-            if (["city", "town", "village"].includes(type)) value += 100;
-            if (["city", "town", "village"].includes(addresstype)) value += 50;
-            if (String(result.class || "").toLowerCase() === "place") value += 25;
-
-            return value + Number(result.importance || 0);
-        };
-
-        return score(b) - score(a);
-    });
-
-
-    return settlements[0] || null;
-}
-
-
-/**
- * Normalize a place name for exact comparison.
- *
- * @param {string} value
- * @returns {string}
- */
-function normalizePlaceName(value) {
-    return String(value)
-        .normalize("NFKC")
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, " ");
-}
-
-
-/* ============================================================
-   GEOCODING HELPERS
-   ============================================================ */
-
-/**
- * Convert a Nominatim result into the compact location object
- * stored in the study record.
+ * Create the compact location object stored in the study record.
  *
  * @param {string} input
  * @param {object} result
@@ -640,52 +598,38 @@ function normalizePlaceName(value) {
  */
 function createLocationObject(input, result) {
 
-    const latitude =
-        Number(result.lat);
+    const latitude = Number(
+        result.INTPTLAT || result.CENTLAT
+    );
 
-    const longitude =
-        Number(result.lon);
+    const longitude = Number(
+        result.INTPTLON || result.CENTLON
+    );
 
-
-    if (
-        !Number.isFinite(latitude) ||
-        !Number.isFinite(longitude)
-    ) {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
         throw new Error(
-            `The geocoder returned invalid coordinates for "${input}".`
+            `The Census place service returned invalid coordinates for "${input}".`
         );
     }
 
+    const displayName =
+        result.NAME ||
+        `${result.BASENAME}, ${result.requestedState}`;
 
     return {
-        input: input,
-
-        name:
-            result.address?.city ||
-            result.address?.town ||
-            result.address?.village ||
-            result.address?.municipality ||
-            result.address?.hamlet ||
-            result.display_name,
-
-        state:
-            result.address?.state || "",
-
-        country:
-            result.address?.country || "",
-
-        latitude: latitude,
-
-        longitude: longitude,
-
-        displayName:
-            result.display_name,
-
-        osmType:
-            result.osm_type || "",
-
-        osmId:
-            result.osm_id || null
+        input,
+        name: result.BASENAME,
+        state: result.requestedStateName,
+        stateAbbr: result.requestedState,
+        country: "United States",
+        latitude,
+        longitude,
+        displayName,
+        geocoder: "U.S. Census Bureau TIGERweb",
+        censusLayer: result.censusLayerLabel,
+        censusGEOID: result.GEOID || "",
+        censusPlaceCode: result.PLACE || "",
+        censusPlaceClassCode: result.PLACECC || ""
     };
 }
 
@@ -1151,7 +1095,7 @@ function buildStudyRecord() {
         studyArea: currentStudy.studyArea,
 
         provenance: {
-            geocoder: "Nominatim",
+            geocoder: "U.S. Census Bureau TIGERweb",
             geocodedAt: currentStudy.geocodedAt,
             mapReviewedBeforeSave: true
         }
@@ -1331,13 +1275,13 @@ async function createStudyArea() {
 
 
     mapStatus.textContent =
-        "Geocoding the two cities...";
+        "Resolving the two cities with U.S. Census place data...";
 
 
     const runningResult =
         showResult(
             "Creating Study Area",
-            "Geocoding City 1...",
+            "Resolving City 1 with U.S. Census place data...",
             "running"
         );
 
@@ -1356,7 +1300,7 @@ async function createStudyArea() {
         runningResult
             .querySelector(".result-message")
             .textContent =
-            "Geocoding City 2...";
+            "Resolving City 2 with U.S. Census place data...";
 
 
         const city2Result =
@@ -1441,7 +1385,7 @@ async function createStudyArea() {
         runningResult
             .querySelector(".result-message")
             .textContent =
-            `Both cities were geocoded successfully. ` +
+            `Both U.S. Census place records were validated successfully. ` +
             `The combined extent was buffered by ${buffer.toFixed(1)} miles on all four sides. ` +
             `Study ID: ${currentStudy.id}`;
 
@@ -1666,7 +1610,7 @@ function createDataPre(data) {
 /**
  * Continue to the next workflow milestone.
  *
- * Test 3B.3 does not yet collect Overpass data. This button
+ * Test 3B.3.3 does not yet collect Overpass data. This button
  * simply proves that the persisted study can be handed to the
  * next stage without creating another study.
  */
