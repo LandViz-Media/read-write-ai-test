@@ -2,139 +2,118 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>Read Write AI Test</title>
-
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Read / Write AI Test</title>
     <link rel="stylesheet" href="style.css">
 </head>
-
 <body>
+<main class="container">
+    <header class="page-header">
+        <h1>Read / Write AI Test</h1>
+        <p class="subtitle">Test 3 — GitHub App + Cloudflare Worker</p>
+    </header>
 
-    <main class="container">
+    <section class="card">
+        <h2>Study Setup</h2>
+        <p class="section-description">
+            Define a study using two neighboring cities and a buffer around their combined geographic extent.
+        </p>
 
-        <header class="page-header">
-            <h1>Read / Write AI Test</h1>
-            <p class="subtitle">
-                Test 3 — GitHub App + Cloudflare Worker
-            </p>
-        </header>
-
-
-        <section class="card">
-
-            <h2>GitHub App Connection Test</h2>
-
-            <p>
-                This interface tests the connection between the browser,
-                the Cloudflare Worker, and the private GitHub repository.
-            </p>
-
-            <div class="architecture">
-                <span>Browser</span>
-                <span class="arrow">→</span>
-                <span>Cloudflare Worker</span>
-                <span class="arrow">→</span>
-                <span>GitHub App</span>
-                <span class="arrow">→</span>
-                <span>Private Repository</span>
+        <div class="form-grid">
+            <div class="form-group full-width">
+                <label for="studyName">Study Name</label>
+                <input type="text" id="studyName" name="studyName"
+                       placeholder="e.g., Ogden–Boone School Study">
             </div>
 
-        </section>
-
-
-        <section class="card">
-
-            <h2>Connection Tests</h2>
-
-            <div class="button-group">
-
-                <button
-                    id="healthButton"
-                    class="test-button"
-                >
-                    Test Worker
-                </button>
-
-                <button
-                    id="authButton"
-                    class="test-button"
-                >
-                    Test GitHub Authentication
-                </button>
-
-                <button
-                    id="writeButton"
-                    class="test-button primary"
-                >
-                    Run GitHub Write Test
-                </button>
-
+            <div class="form-group">
+                <label for="city1">City 1</label>
+                <input type="text" id="city1" name="city1"
+                       placeholder="e.g., Ogden, Iowa">
             </div>
 
-        </section>
+            <div class="form-group">
+                <label for="city2">City 2</label>
+                <input type="text" id="city2" name="city2"
+                       placeholder="e.g., Boone, Iowa">
+            </div>
 
-
-        <section class="card">
-
-            <h2>Test Results</h2>
-
-            <div id="results">
-
-                <div class="result waiting">
-                    <div class="result-title">
-                        Waiting for tests...
-                    </div>
-
-                    <div class="result-message">
-                        Run the tests above to verify the connection.
-                    </div>
+            <div class="form-group buffer-group">
+                <label for="bufferDistance">Buffer Distance</label>
+                <div class="input-with-unit">
+                    <input type="number" id="bufferDistance" name="bufferDistance"
+                           value="5.0" min="0" max="25" step="0.1">
+                    <span class="unit">miles</span>
                 </div>
-
+                <div class="field-help">0–25 miles, in 0.1-mile increments</div>
             </div>
+        </div>
 
-        </section>
+        <div class="setup-actions">
+            <button id="createStudyAreaButton" class="test-button primary" type="button">
+                Create Study Area
+            </button>
+        </div>
+    </section>
 
+    <section class="card">
+        <div class="map-header">
+            <div>
+                <h2>Study Area</h2>
+                <p id="mapStatus" class="map-status">
+                    Enter two cities and create a study area.
+                </p>
+            </div>
+        </div>
 
-        <section class="card">
+        <div id="map" class="map-placeholder">
+            <div class="map-placeholder-content">
+                <div class="map-icon">MAP</div>
+                <p>Map will appear here after the cities are geocoded.</p>
+                <span>Test 3B.2 will add the interactive map.</span>
+            </div>
+        </div>
+    </section>
 
-            <h2>Security</h2>
+    <section class="card">
+        <h2>Study Actions</h2>
+        <p class="section-description">
+            Review the study area before saving or continuing to OSM data collection.
+        </p>
 
-            <ul>
-                <li>
-                    No GitHub token is stored in this browser application.
-                </li>
+        <div class="study-actions">
+            <button id="saveStudyButton" class="test-button" type="button" disabled>
+                Save Study
+            </button>
+            <button id="continueButton" class="test-button primary" type="button" disabled>
+                Continue to OSM Data Collection →
+            </button>
+        </div>
+    </section>
 
-                <li>
-                    The GitHub App private key remains in Cloudflare.
-                </li>
+    <section class="card">
+        <h2>Test Results</h2>
+        <div id="results">
+            <div class="result waiting">
+                <div class="result-title">Waiting for tests...</div>
+                <div class="result-message">The Study Setup interface is ready.</div>
+            </div>
+        </div>
+    </section>
 
-                <li>
-                    The browser communicates only with the Cloudflare Worker.
-                </li>
+    <section class="card">
+        <h2>Security</h2>
+        <ul>
+            <li>No GitHub token is stored in this browser application.</li>
+            <li>The GitHub App private key remains in Cloudflare.</li>
+            <li>The browser communicates with the Worker only when a server-side operation is needed.</li>
+            <li>Public, deterministic operations will be performed in the browser when appropriate.</li>
+        </ul>
+    </section>
 
-                <li>
-                    The GitHub repository is accessed using a short-lived
-                    GitHub App installation token.
-                </li>
-            </ul>
+    <footer><p>Test 3 — LandViz Media</p></footer>
+</main>
 
-        </section>
-
-
-        <footer>
-            <p>
-                Test 3 — LandViz Media
-            </p>
-        </footer>
-
-    </main>
-
-    <script src="app.js"></script>
-
+<script src="app.js"></script>
 </body>
 </html>
