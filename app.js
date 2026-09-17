@@ -7,7 +7,7 @@
  *   persistence of the study through the
  *   Cloudflare Worker.
  *
- * Test 3B.3.3:
+ * Test 3B.3.3.1:
  *   - Replace Nominatim city geocoding with validated U.S. Census place resolution.
  *   - Enable Save Study after the study area has been created.
  *   - Generate a stable study ID in the browser.
@@ -89,7 +89,7 @@ const resultsContainer =
  * The browser talks to the Cloudflare Worker only for private GitHub persistence. It never
  * receives the GitHub App private key or an installation token.
  *
- * Test 3B.3.3 expects the Worker to expose:
+ * Test 3B.3.3.1 expects the Worker to expose:
  *
  *   POST /api/v1/studies
  *
@@ -452,15 +452,23 @@ async function fetchCensusPlaceLayer(layerId, city, stateFips) {
         .replace(/'/g, "''")
         .toUpperCase();
 
+    /*
+     * ArcGIS standardized string comparisons can be case-sensitive.
+     * Use UPPER() so inputs such as "Madrid", "MADRID", and
+     * "madrid" resolve to the same Census place. The state filter
+     * keeps the request small and prevents same-name places in other
+     * states from being considered.
+     */
     url.searchParams.set(
         "where",
-        `BASENAME = '${escapedCity}' AND STATE = '${stateFips}'`
+        `UPPER(BASENAME) = UPPER('${escapedCity}') AND STATE = '${stateFips}'`
     );
     url.searchParams.set(
         "outFields",
         "BASENAME,NAME,STATE,GEOID,PLACE,PLACECC,CENTLAT,CENTLON,INTPTLAT,INTPTLON"
     );
     url.searchParams.set("returnGeometry", "false");
+    url.searchParams.set("sqlFormat", "standard");
     url.searchParams.set("f", "json");
     url.searchParams.set("_cb", Date.now().toString());
 
