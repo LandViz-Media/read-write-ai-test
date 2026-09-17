@@ -7,7 +7,7 @@
  *   persistence of the study through the
  *   Cloudflare Worker.
  *
- * Test 3B.3.3.1:
+ * Test 3B.3.3.2:
  *   - Replace Nominatim city geocoding with validated U.S. Census place resolution.
  *   - Enable Save Study after the study area has been created.
  *   - Generate a stable study ID in the browser.
@@ -35,6 +35,12 @@ const city1Input =
 
 const city2Input =
     document.getElementById("city2");
+
+const state1Input =
+    document.getElementById("state1");
+
+const state2Input =
+    document.getElementById("state2");
 
 const bufferDistanceInput =
     document.getElementById("bufferDistance");
@@ -89,7 +95,7 @@ const resultsContainer =
  * The browser talks to the Cloudflare Worker only for private GitHub persistence. It never
  * receives the GitHub App private key or an installation token.
  *
- * Test 3B.3.3.1 expects the Worker to expose:
+ * Test 3B.3.3.2 expects the Worker to expose:
  *
  *   POST /api/v1/studies
  *
@@ -150,6 +156,38 @@ let studyAreaLayer = null;
 let currentStudy = null;
 
 let studySaved = false;
+
+
+/* ============================================================
+   STATE SELECTS
+   ============================================================ */
+
+/**
+ * Populate both state selectors from the same U.S. state/territory list.
+ * Iowa is the default because this test is being developed around Iowa,
+ * but there is no Iowa restriction in the geocoding logic.
+ */
+function initializeStateSelectors() {
+
+    const options = Object.keys(STATE_DISPLAY_NAMES)
+        .sort((a, b) =>
+            STATE_DISPLAY_NAMES[a].localeCompare(STATE_DISPLAY_NAMES[b])
+        );
+
+    [state1Input, state2Input].forEach(select => {
+
+        select.innerHTML = "";
+
+        options.forEach(abbr => {
+            const option = document.createElement("option");
+            option.value = abbr;
+            option.textContent = STATE_DISPLAY_NAMES[abbr];
+            select.appendChild(option);
+        });
+
+        select.value = "IA";
+    });
+}
 
 
 /* ============================================================
@@ -384,6 +422,22 @@ const STATE_NAMES = {
     WISCONSIN: "WI", WYOMING: "WY", PUERTORICO: "PR"
 };
 
+const STATE_DISPLAY_NAMES = {
+    AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas",
+    CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware",
+    DC: "District of Columbia", FL: "Florida", GA: "Georgia", HI: "Hawaii",
+    ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas",
+    KY: "Kentucky", LA: "Louisiana", ME: "Maine", MD: "Maryland",
+    MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi",
+    MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada",
+    NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York",
+    NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma",
+    OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina",
+    SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah",
+    VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia",
+    WI: "Wisconsin", WY: "Wyoming", PR: "Puerto Rico"
+};
+
 /**
  * Parse a city/place input such as "Jefferson, IA" or
  * "Jefferson, Iowa". A state is required because place names
@@ -392,50 +446,52 @@ const STATE_NAMES = {
  * @param {string} query
  * @returns {{city: string, stateAbbr: string, stateName: string, stateFips: string}}
  */
-function parseCityInput(query) {
+function parseCityInput(cityInput, stateAbbr) {
 
-    const parts = String(query)
-        .split(",")
-        .map(value => value.trim())
-        .filter(Boolean);
+    const rawCity = String(cityInput).trim();
 
-    if (parts.length < 2) {
-        throw new Error(
-            `Enter the city and state, for example "Jefferson, IA".`
-        );
+    if (!rawCity) {
+        throw new Error("Enter a city name.");
     }
 
-    const city = parts[0];
-    const stateInput = parts.slice(1).join(" ");
-    const normalizedState = stateInput
-        .toUpperCase()
-        .replace(/[^A-Z]/g, "");
+    /*
+     * The state is selected from the interface rather than typed by the
+     * user. For convenience, if someone pastes "City, IA" into the
+     * city box, retain only the city portion. The selected dropdown state
+     * remains authoritative.
+     */
+    const city = rawCity.split(",")[0].trim();
+    const normalizedState = String(stateAbbr || "")
+        .trim()
+        .toUpperCase();
 
-    let stateAbbr = normalizedState;
-
-    if (STATE_NAMES[normalizedState]) {
-        stateAbbr = STATE_NAMES[normalizedState];
+    if (!STATE_FIPS[normalizedState]) {
+        throw new Error("Select a valid U.S. state for the city.");
     }
 
-    if (!STATE_FIPS[stateAbbr]) {
-        throw new Error(
-            `"${stateInput}" is not a recognized U.S. state or territory abbreviation/name.`
-        );
-    }
-
-    const stateName = Object.entries(STATE_NAMES)
-        .find(([, abbr]) => abbr === stateAbbr)?.[0] || stateAbbr;
+    const stateName = STATE_DISPLAY_NAMES[normalizedState] || normalizedState;
 
     return {
         city,
-        stateAbbr,
+        stateAbbr: normalizedState,
         stateName,
-        stateFips: STATE_FIPS[stateAbbr]
+        stateFips: STATE_FIPS[normalizedState]
     };
 }
 
 /**
  * Query a Census TIGERweb place layer.
+ *
+ * The current TIGERweb service does not advertise support for the
+ * `sqlFormat=standard` parameter. Earlier versions used that parameter
+ * together with UPPER(), which can cause the request to fail before the
+ * Census data are returned.
+ *
+ * We therefore use a simple state filter that the service supports and
+ * perform the exact, case-insensitive place-name validation in JavaScript.
+ * This is also more transparent for the research workflow: the browser
+ * receives Census places for the selected state and explicitly chooses
+ * the exact requested place rather than trusting a fuzzy server match.
  *
  * @param {number} layerId
  * @param {string} city
@@ -448,27 +504,15 @@ async function fetchCensusPlaceLayer(layerId, city, stateFips) {
         `${CENSUS_TIGERWEB_BASE_URL}/${layerId}/query`
     );
 
-    const escapedCity = city
-        .replace(/'/g, "''")
-        .toUpperCase();
-
-    /*
-     * ArcGIS standardized string comparisons can be case-sensitive.
-     * Use UPPER() so inputs such as "Madrid", "MADRID", and
-     * "madrid" resolve to the same Census place. The state filter
-     * keeps the request small and prevents same-name places in other
-     * states from being considered.
-     */
     url.searchParams.set(
         "where",
-        `UPPER(BASENAME) = UPPER('${escapedCity}') AND STATE = '${stateFips}'`
+        `STATE = '${stateFips}'`
     );
     url.searchParams.set(
         "outFields",
         "BASENAME,NAME,STATE,GEOID,PLACE,PLACECC,CENTLAT,CENTLON,INTPTLAT,INTPTLON"
     );
     url.searchParams.set("returnGeometry", "false");
-    url.searchParams.set("sqlFormat", "standard");
     url.searchParams.set("f", "json");
     url.searchParams.set("_cb", Date.now().toString());
 
@@ -498,6 +542,8 @@ async function fetchCensusPlaceLayer(layerId, city, stateFips) {
         ? data.features
         : [];
 }
+
+
 
 /**
  * Validate and rank Census place features.
@@ -551,9 +597,9 @@ function selectCensusPlaceResult(features, requestedCity) {
  * @param {string} query
  * @returns {Promise<object>}
  */
-async function geocodeCity(query) {
+async function geocodeCity(cityInputValue, stateAbbr) {
 
-    const parsed = parseCityInput(query);
+    const parsed = parseCityInput(cityInputValue, stateAbbr);
     const layerErrors = [];
 
     for (const layer of CENSUS_PLACE_LAYERS) {
@@ -1272,6 +1318,18 @@ async function createStudyArea() {
     const city2InputValue =
         city2Input.value.trim();
 
+    const city1State =
+        state1Input.value;
+
+    const city2State =
+        state2Input.value;
+
+    const city1LocationInput =
+        `${city1InputValue}, ${city1State}`;
+
+    const city2LocationInput =
+        `${city2InputValue}, ${city2State}`;
+
     const buffer =
         Number(bufferDistanceInput.value);
 
@@ -1297,12 +1355,12 @@ async function createStudyArea() {
     try {
 
         /*
-         * Keep the requests sequential because Nominatim asks
-         * clients to avoid bursts of requests.
+         * Keep the requests sequential so the Census place service is not
+         * queried unnecessarily in parallel.
          */
 
         const city1Result =
-            await geocodeCity(city1InputValue);
+            await geocodeCity(city1InputValue, city1State);
 
 
         runningResult
@@ -1312,18 +1370,18 @@ async function createStudyArea() {
 
 
         const city2Result =
-            await geocodeCity(city2InputValue);
+            await geocodeCity(city2InputValue, city2State);
 
 
         const city1 =
             createLocationObject(
-                city1InputValue,
+                city1LocationInput,
                 city1Result
             );
 
         const city2 =
             createLocationObject(
-                city2InputValue,
+                city2LocationInput,
                 city2Result
             );
 
@@ -1618,7 +1676,7 @@ function createDataPre(data) {
 /**
  * Continue to the next workflow milestone.
  *
- * Test 3B.3.3 does not yet collect Overpass data. This button
+ * Test 3B.3.3.2 does not yet collect Overpass data. This button
  * simply proves that the persisted study can be handed to the
  * next stage without creating another study.
  */
@@ -1680,6 +1738,22 @@ city2Input.addEventListener(
     }
 );
 
+state1Input.addEventListener(
+    "change",
+    () => {
+        invalidateCurrentStudy();
+        updateCreateButton();
+    }
+);
+
+state2Input.addEventListener(
+    "change",
+    () => {
+        invalidateCurrentStudy();
+        updateCreateButton();
+    }
+);
+
 bufferDistanceInput.addEventListener(
     "input",
     () => {
@@ -1714,6 +1788,7 @@ continueButton.addEventListener(
    INITIALIZATION
    ============================================================ */
 
+initializeStateSelectors();
 initializeMap();
 updateSaveControls();
 updateCreateButton();
