@@ -66,6 +66,12 @@ const studyAreaDimensions =
 const saveSummary =
     document.getElementById("saveSummary");
 
+const reviewControl =
+    document.getElementById("reviewControl");
+
+const reviewedStudyCheckbox =
+    document.getElementById("reviewedStudyCheckbox");
+
 const studyIdDisplay =
     document.getElementById("studyIdDisplay");
 
@@ -325,24 +331,125 @@ function showResult(
  */
 async function geocodeCity(query) {
 
-    const requestedName =
-        query
-            .split(",")[0]
-            .trim()
-            .toLowerCase();
+    const parsed = parseCityInput(query);
+    const requestedName = parsed.city.toLowerCase();
 
 
-    const url =
+    /*
+     * First use Nominatim's structured search. This is much safer
+     * for a city/state input than asking Nominatim to interpret a
+     * free-form string such as "Jefferson, IA".
+     *
+     * Nominatim documents `city` and `state` as structured search
+     * fields and `featureType=settlement` as a way to restrict the
+     * result to inhabited places rather than counties or other
+     * administrative features.
+     */
+    const structuredUrl =
         new URL(NOMINATIM_URL);
 
+    structuredUrl.searchParams.set("city", parsed.city);
+    structuredUrl.searchParams.set("state", "Iowa");
+    structuredUrl.searchParams.set("country", "United States");
+    structuredUrl.searchParams.set("countrycodes", "us");
+    structuredUrl.searchParams.set("format", "jsonv2");
+    structuredUrl.searchParams.set("limit", "10");
+    structuredUrl.searchParams.set("addressdetails", "1");
+    structuredUrl.searchParams.set("featuretype", "settlement");
 
-    url.searchParams.set("q", query);
-    url.searchParams.set("format", "jsonv2");
-    url.searchParams.set("limit", "10");
-    url.searchParams.set("addressdetails", "1");
-    url.searchParams.set("featuretype", "settlement");
-    url.searchParams.set("countrycodes", "us");
 
+    const structuredResults =
+        await fetchNominatimResults(structuredUrl);
+
+
+    let selected =
+        selectSettlementResult(
+            structuredResults,
+            requestedName
+        );
+
+
+    /*
+     * If structured search did not produce a valid settlement,
+     * make a second, broader settlement-only search. We still
+     * refuse to accept counties or other administrative features.
+     */
+    if (!selected) {
+
+        const fallbackUrl =
+            new URL(NOMINATIM_URL);
+
+        fallbackUrl.searchParams.set(
+            "q",
+            `${parsed.city}, Iowa, United States`
+        );
+        fallbackUrl.searchParams.set("format", "jsonv2");
+        fallbackUrl.searchParams.set("limit", "10");
+        fallbackUrl.searchParams.set("addressdetails", "1");
+        fallbackUrl.searchParams.set("featuretype", "settlement");
+        fallbackUrl.searchParams.set("countrycodes", "us");
+
+
+        const fallbackResults =
+            await fetchNominatimResults(fallbackUrl);
+
+
+        selected =
+            selectSettlementResult(
+                fallbackResults,
+                requestedName
+            );
+    }
+
+
+    if (!selected) {
+        throw new Error(
+            `Nominatim did not return a valid Iowa settlement named "${parsed.city}". ` +
+            `The search was intentionally rejected rather than using a county or other administrative boundary.`
+        );
+    }
+
+
+    return selected;
+}
+
+
+/**
+ * Parse a city input such as "Jefferson, IA" or "Jefferson, Iowa".
+ *
+ * The prototype is intentionally Iowa-specific because this study
+ * workflow currently targets Iowa Department of Education data.
+ *
+ * @param {string} query
+ * @returns {{city: string}}
+ */
+function parseCityInput(query) {
+
+    const parts =
+        query
+            .split(",")
+            .map(value => value.trim())
+            .filter(Boolean);
+
+
+    if (parts.length === 0) {
+        throw new Error("Please enter a city name.");
+    }
+
+
+    return {
+        city: parts[0]
+    };
+}
+
+
+/**
+ * Request and parse a Nominatim response.
+ *
+ * @param {URL} url
+ * @returns {Promise<Array>}
+ */
+async function fetchNominatimResults(url) {
 
     const response =
         await fetch(url.toString(), {
@@ -364,82 +471,98 @@ async function geocodeCity(query) {
         await response.json();
 
 
-    if (
-        !Array.isArray(results) ||
-        results.length === 0
-    ) {
-        throw new Error(
-            `No settlement could be found for "${query}".`
-        );
-    }
+    return Array.isArray(results)
+        ? results
+        : [];
+}
 
 
-    const iowaResults =
+/**
+ * Select only a true settlement matching the requested name.
+ *
+ * This deliberately rejects county/admin results. For a research
+ * workflow, silently substituting "Jefferson County" for the city
+ * "Jefferson" is worse than stopping and asking the user to correct
+ * an ambiguous geocoding result.
+ *
+ * @param {Array} results
+ * @param {string} requestedName
+ * @returns {object|null}
+ */
+function selectSettlementResult(results, requestedName) {
+
+    const settlements =
         results.filter(result => {
+
+            const type =
+                String(result.type || result.addresstype || "")
+                    .toLowerCase();
+
+            const resultClass =
+                String(result.class || "")
+                    .toLowerCase();
+
+            const name =
+                String(result.name || "")
+                    .trim()
+                    .toLowerCase();
 
             const address =
                 result.address || {};
 
+            const state =
+                String(address.state || "")
+                    .trim()
+                    .toLowerCase();
+
+            const countryCode =
+                String(
+                    address.country_code ||
+                    result.address?.country_code ||
+                    ""
+                )
+                    .trim()
+                    .toLowerCase();
+
+
+            const validSettlementType = [
+                "city",
+                "town",
+                "village",
+                "hamlet",
+                "municipality",
+                "locality"
+            ].includes(type);
+
+
+            const validSettlementClass =
+                resultClass === "place" ||
+                resultClass === "boundary" && validSettlementType;
+
+
+            const iowa =
+                state === "iowa" ||
+                address["ISO3166-2-lvl4"] === "US-IA";
+
+
+            const us =
+                countryCode === "us" ||
+                /united states/i.test(address.country || "");
+
+
             return (
-                address.state === "Iowa" ||
-                address["ISO3166-2-lvl4"] === "US-IA"
+                validSettlementType &&
+                validSettlementClass &&
+                iowa &&
+                us &&
+                name === requestedName
             );
         });
 
 
-    const candidates =
-        iowaResults.length > 0
-            ? iowaResults
-            : results;
-
-
-    const exactMatch =
-        candidates.find(result => {
-
-            const address =
-                result.address || {};
-
-            const placeNames = [
-                address.city,
-                address.town,
-                address.village,
-                address.municipality,
-                address.hamlet
-            ]
-                .filter(Boolean)
-                .map(value => value.toLowerCase());
-
-            return placeNames.includes(requestedName);
-        });
-
-
-    const selected =
-        exactMatch || candidates[0];
-
-
-    /*
-     * Guard against accepting a non-Iowa result when the user
-     * supplied Iowa. This is intentionally conservative because
-     * study provenance matters.
-     */
-
-    const selectedState =
-        selected.address?.state || "";
-
-    if (
-        /iowa/i.test(query) &&
-        selectedState &&
-        selectedState !== "Iowa"
-    ) {
-        throw new Error(
-            `The geocoder did not return an Iowa settlement for "${query}". ` +
-            `It returned "${selected.display_name}".`
-        );
-    }
-
-
-    return selected;
+    return settlements[0] || null;
 }
+
 
 
 /* ============================================================
@@ -997,6 +1120,22 @@ function updateSaveSummary(study, statusText = "Ready to save") {
 }
 
 
+/**
+ * Update the explicit human-review gate for persistence.
+ */
+function updateReviewControls() {
+
+    const reviewed =
+        reviewedStudyCheckbox.checked;
+
+    const hasStudy =
+        currentStudy !== null;
+
+    saveStudyButton.disabled =
+        !hasStudy || !reviewed || studySaved;
+}
+
+
 /* ============================================================
    WORKER RESPONSE HANDLING
    ============================================================ */
@@ -1126,6 +1265,8 @@ async function createStudyArea() {
     saveStudyButton.disabled = true;
     continueButton.disabled = true;
     studySaved = false;
+    reviewedStudyCheckbox.checked = false;
+    reviewControl.hidden = true;
 
 
     mapStatus.textContent =
@@ -1219,8 +1360,12 @@ async function createStudyArea() {
 
         updateSaveSummary(
             currentStudy,
-            "Ready to save"
+            "Awaiting review"
         );
+
+        reviewControl.hidden = false;
+        reviewedStudyCheckbox.checked = false;
+        updateReviewControls();
 
 
         mapStatus.textContent =
@@ -1255,6 +1400,8 @@ async function createStudyArea() {
 
         locationDetails.hidden = true;
         saveSummary.hidden = true;
+        reviewControl.hidden = true;
+        reviewedStudyCheckbox.checked = false;
 
         mapStatus.textContent =
             "Unable to create the study area.";
@@ -1293,6 +1440,18 @@ async function saveStudy() {
         showResult(
             "Nothing to Save",
             "Create and review a study area first.",
+            "fail"
+        );
+
+        return;
+    }
+
+
+    if (!reviewedStudyCheckbox.checked) {
+
+        showResult(
+            "Review Required",
+            "Please review the map and resolved city locations, then check the review box before saving.",
             "fail"
         );
 
@@ -1492,10 +1651,21 @@ function continueToOsmCollection() {
    INPUT EVENTS
    ============================================================ */
 
+function invalidateCurrentStudy() {
+    studySaved = false;
+    currentStudy = null;
+    reviewedStudyCheckbox.checked = false;
+    reviewControl.hidden = true;
+    saveSummary.hidden = true;
+    continueButton.disabled = true;
+    updateReviewControls();
+}
+
+
 studyNameInput.addEventListener(
     "input",
     () => {
-        studySaved = false;
+        invalidateCurrentStudy();
         updateCreateButton();
     }
 );
@@ -1503,7 +1673,7 @@ studyNameInput.addEventListener(
 city1Input.addEventListener(
     "input",
     () => {
-        studySaved = false;
+        invalidateCurrentStudy();
         updateCreateButton();
     }
 );
@@ -1511,7 +1681,7 @@ city1Input.addEventListener(
 city2Input.addEventListener(
     "input",
     () => {
-        studySaved = false;
+        invalidateCurrentStudy();
         updateCreateButton();
     }
 );
@@ -1519,8 +1689,25 @@ city2Input.addEventListener(
 bufferDistanceInput.addEventListener(
     "input",
     () => {
-        studySaved = false;
+        invalidateCurrentStudy();
         updateCreateButton();
+    }
+);
+
+
+reviewedStudyCheckbox.addEventListener(
+    "change",
+    () => {
+        if (currentStudy !== null) {
+            updateSaveSummary(
+                currentStudy,
+                reviewedStudyCheckbox.checked
+                    ? "Reviewed — ready to save"
+                    : "Awaiting review"
+            );
+        }
+
+        updateReviewControls();
     }
 );
 
@@ -1550,4 +1737,6 @@ continueButton.addEventListener(
    ============================================================ */
 
 initializeMap();
+reviewControl.hidden = true;
+updateReviewControls();
 updateCreateButton();
