@@ -250,30 +250,6 @@ body {
 }
 
 
-.review-control {
-    margin: 0 0 18px;
-    padding: 14px 16px;
-    border: 1px solid #cfd4d9;
-    border-radius: 7px;
-    background: #f8f9fa;
-}
-
-.review-checkbox {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    cursor: pointer;
-    line-height: 1.45;
-    font-size: 0.95rem;
-}
-
-.review-checkbox input {
-    flex: 0 0 auto;
-    width: 18px;
-    height: 18px;
-    margin: 2px 0 0;
-}
-
 #results {
     display: flex;
     flex-direction: column;

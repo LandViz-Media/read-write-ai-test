@@ -4,14 +4,14 @@
  * Responsibility:
  *   Controls the browser-side Study Setup workflow,
  *   geocoding, Leaflet map, study-area geometry, and
- *   persistence of the reviewed study through the
+ *   persistence of the study through the
  *   Cloudflare Worker.
  *
  * Test 3B.3:
  *   - Preserve the Test 3B.2 geocoding and map workflow.
- *   - Enable Save Study after the study area has been reviewed.
+ *   - Enable Save Study after the study area has been created.
  *   - Generate a stable study ID in the browser.
- *   - Send the reviewed study to the Worker through the
+ *   - Send the study to the Worker through the
  *     application-level study API.
  *   - The Worker/GitHub App remains responsible for GitHub auth
  *     and writing the private repository files.
@@ -66,12 +66,6 @@ const studyAreaDimensions =
 const saveSummary =
     document.getElementById("saveSummary");
 
-const reviewControl =
-    document.getElementById("reviewControl");
-
-const reviewedStudyCheckbox =
-    document.getElementById("reviewedStudyCheckbox");
-
 const studyIdDisplay =
     document.getElementById("studyIdDisplay");
 
@@ -99,7 +93,7 @@ const resultsContainer =
  *
  *   POST /api/v1/studies
  *
- * The request body is the complete reviewed study object plus
+ * The request body is the complete study object plus
  * its GeoJSON study-area artifact. The Worker should persist:
  *
  *   data/studies.json
@@ -1053,7 +1047,7 @@ function generateStudyId() {
    ============================================================ */
 
 /**
- * Build the persistent study object from the reviewed state.
+ * Build the persistent study object from the current study-area state.
  *
  * @returns {object}
  */
@@ -1061,7 +1055,7 @@ function buildStudyRecord() {
 
     if (currentStudy === null) {
         throw new Error(
-            "There is no reviewed study to save."
+            "There is no study to save."
         );
     }
 
@@ -1092,7 +1086,7 @@ function buildStudyRecord() {
         provenance: {
             geocoder: "Nominatim",
             geocodedAt: currentStudy.geocodedAt,
-            reviewedInBrowser: true
+            mapReviewedBeforeSave: true
         }
     };
 }
@@ -1121,18 +1115,19 @@ function updateSaveSummary(study, statusText = "Ready to save") {
 
 
 /**
- * Update the explicit human-review gate for persistence.
+ * Update Save Study availability.
+ *
+ * The map and resolved locations are presented for review before
+ * this button becomes available. No separate checkbox is required;
+ * clicking Save Study is the user's review/approval action.
  */
-function updateReviewControls() {
-
-    const reviewed =
-        reviewedStudyCheckbox.checked;
+function updateSaveControls() {
 
     const hasStudy =
         currentStudy !== null;
 
     saveStudyButton.disabled =
-        !hasStudy || !reviewed || studySaved;
+        !hasStudy || studySaved;
 }
 
 
@@ -1265,8 +1260,6 @@ async function createStudyArea() {
     saveStudyButton.disabled = true;
     continueButton.disabled = true;
     studySaved = false;
-    reviewedStudyCheckbox.checked = false;
-    reviewControl.hidden = true;
 
 
     mapStatus.textContent =
@@ -1360,16 +1353,13 @@ async function createStudyArea() {
 
         updateSaveSummary(
             currentStudy,
-            "Awaiting review"
+            "Ready to save"
         );
 
-        reviewControl.hidden = false;
-        reviewedStudyCheckbox.checked = false;
-        updateReviewControls();
-
+        updateSaveControls();
 
         mapStatus.textContent =
-            "Study area created. Review the map before saving.";
+            "Study area created. Review the map, then save the study.";
 
 
         runningResult.className =
@@ -1400,8 +1390,6 @@ async function createStudyArea() {
 
         locationDetails.hidden = true;
         saveSummary.hidden = true;
-        reviewControl.hidden = true;
-        reviewedStudyCheckbox.checked = false;
 
         mapStatus.textContent =
             "Unable to create the study area.";
@@ -1431,7 +1419,7 @@ async function createStudyArea() {
    ============================================================ */
 
 /**
- * Save the reviewed study through the Worker.
+ * Save the study through the Worker.
  */
 async function saveStudy() {
 
@@ -1440,18 +1428,6 @@ async function saveStudy() {
         showResult(
             "Nothing to Save",
             "Create and review a study area first.",
-            "fail"
-        );
-
-        return;
-    }
-
-
-    if (!reviewedStudyCheckbox.checked) {
-
-        showResult(
-            "Review Required",
-            "Please review the map and resolved city locations, then check the review box before saving.",
             "fail"
         );
 
@@ -1476,7 +1452,7 @@ async function saveStudy() {
     createStudyAreaButton.disabled = true;
 
     mapStatus.textContent =
-        "Saving the reviewed study to the private GitHub repository...";
+        "Saving the study to the private GitHub repository...";
 
 
     updateSaveSummary(
@@ -1488,7 +1464,7 @@ async function saveStudy() {
     const runningResult =
         showResult(
             "Saving Study",
-            "Sending the reviewed study to the Cloudflare Worker...",
+            "Sending the study to the Cloudflare Worker...",
             "running"
         );
 
@@ -1654,11 +1630,9 @@ function continueToOsmCollection() {
 function invalidateCurrentStudy() {
     studySaved = false;
     currentStudy = null;
-    reviewedStudyCheckbox.checked = false;
-    reviewControl.hidden = true;
     saveSummary.hidden = true;
+    saveStudyButton.disabled = true;
     continueButton.disabled = true;
-    updateReviewControls();
 }
 
 
@@ -1695,22 +1669,6 @@ bufferDistanceInput.addEventListener(
 );
 
 
-reviewedStudyCheckbox.addEventListener(
-    "change",
-    () => {
-        if (currentStudy !== null) {
-            updateSaveSummary(
-                currentStudy,
-                reviewedStudyCheckbox.checked
-                    ? "Reviewed — ready to save"
-                    : "Awaiting review"
-            );
-        }
-
-        updateReviewControls();
-    }
-);
-
 
 /* ============================================================
    EVENT HANDLERS
@@ -1737,6 +1695,5 @@ continueButton.addEventListener(
    ============================================================ */
 
 initializeMap();
-reviewControl.hidden = true;
-updateReviewControls();
+updateSaveControls();
 updateCreateButton();
