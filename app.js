@@ -126,20 +126,33 @@ function initializeMap() {
 
 
     /*
-     * OpenStreetMap tiles are public map tiles.
-     *
-     * Attribution is required by the tile provider.
+     * Use the primary OpenStreetMap tile hostname rather than
+     * the subdomain template. This keeps the tile source simple
+     * for this prototype.
      */
 
     L.tileLayer(
-        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
             maxZoom: 19,
 
             attribution:
-                '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }
     ).addTo(map);
+
+
+    /*
+     * The map is inside a card whose dimensions can settle after
+     * Leaflet initializes. invalidateSize() tells Leaflet to
+     * recalculate the container dimensions.
+     */
+
+    requestAnimationFrame(() => {
+        map.invalidateSize({
+            pan: false
+        });
+    });
 }
 
 
@@ -292,6 +305,12 @@ async function geocodeCity(query) {
         new URL(NOMINATIM_URL);
 
 
+    /*
+     * Restrict the search to the United States and to
+     * settlement-level places. This prevents a query such as
+     * "Boone, Iowa" from resolving to Boone County.
+     */
+
     url.searchParams.set(
         "q",
         query
@@ -306,13 +325,25 @@ async function geocodeCity(query) {
 
     url.searchParams.set(
         "limit",
-        "5"
+        "10"
     );
 
 
     url.searchParams.set(
         "addressdetails",
         "1"
+    );
+
+
+    url.searchParams.set(
+        "featuretype",
+        "settlement"
+    );
+
+
+    url.searchParams.set(
+        "countrycodes",
+        "us"
     );
 
 
@@ -344,18 +375,17 @@ async function geocodeCity(query) {
     ) {
 
         throw new Error(
-            `No location could be found for "${query}".`
+            `No settlement could be found for "${query}".`
         );
     }
 
 
     /*
-     * Prefer an Iowa result when the user's query includes
-     * Iowa or when Nominatim returns one among the candidates.
+     * Prefer an Iowa result.
      */
 
-    const iowaResult =
-        results.find(result => {
+    const iowaResults =
+        results.filter(result => {
 
             const address =
                 result.address || {};
@@ -368,7 +398,52 @@ async function geocodeCity(query) {
         });
 
 
-    return iowaResult || results[0];
+    const candidates =
+        iowaResults.length > 0
+            ? iowaResults
+            : results;
+
+
+    /*
+     * Prefer a candidate whose city/town/village/municipality
+     * name matches the user's city name.
+     */
+
+    const requestedName =
+        query
+            .split(",")[0]
+            .trim()
+            .toLowerCase();
+
+
+    const exactMatch =
+        candidates.find(result => {
+
+            const address =
+                result.address || {};
+
+
+            const placeNames = [
+                address.city,
+                address.town,
+                address.village,
+                address.municipality,
+                address.hamlet
+            ]
+            .filter(Boolean)
+            .map(value =>
+                value.toLowerCase()
+            );
+
+
+            return placeNames.includes(
+                requestedName
+            );
+
+        });
+
+
+    return exactMatch || candidates[0];
 }
 
 
@@ -698,12 +773,45 @@ function displayStudyArea(
      * Fit the map to the resulting study area.
      */
 
+    /*
+     * Recalculate the map container dimensions before fitting.
+     * This is important because the map lives inside a page card.
+     */
+
+    map.invalidateSize({
+        pan: false
+    });
+
+
     map.fitBounds(
         bounds,
         {
-            padding: [30, 30]
+            padding: [30, 30],
+            maxZoom: 12
         }
     );
+
+
+    /*
+     * A second size check after the layout has settled prevents
+     * partial tile rendering when the page has just loaded.
+     */
+
+    setTimeout(() => {
+
+        map.invalidateSize({
+            pan: false
+        });
+
+        map.fitBounds(
+            bounds,
+            {
+                padding: [30, 30],
+                maxZoom: 12
+            }
+        );
+
+    }, 100);
 
 
     /*
