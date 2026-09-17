@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Read Write AI Test</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <main class="container">
+
+        <header class="page-header">
+            <h1>Read / Write AI Test</h1>
+            <p class="subtitle">
+                Test 3 — GitHub App + Cloudflare Worker
+            </p>
+        </header>
+
+
+        <section class="card">
+
+            <h2>GitHub App Connection Test</h2>
+
+            <p>
+                This interface tests the connection between the browser,
+                the Cloudflare Worker, and the private GitHub repository.
+            </p>
+
+            <div class="architecture">
+                <span>Browser</span>
+                <span class="arrow">→</span>
+                <span>Cloudflare Worker</span>
+                <span class="arrow">→</span>
+                <span>GitHub App</span>
+                <span class="arrow">→</span>
+                <span>Private Repository</span>
+            </div>
+
+        </section>
+
+
+        <section class="card">
+
+            <h2>Connection Tests</h2>
+
+            <div class="button-group">
+
+                <button
+                    id="healthButton"
+                    class="test-button"
+                >
+                    Test Worker
+                </button>
+
+                <button
+                    id="authButton"
+                    class="test-button"
+                >
+                    Test GitHub Authentication
+                </button>
+
+                <button
+                    id="writeButton"
+                    class="test-button primary"
+                >
+                    Run GitHub Write Test
+                </button>
+
+            </div>
+
+        </section>
+
+
+        <section class="card">
+
+            <h2>Test Results</h2>
+
+            <div id="results">
+
+                <div class="result waiting">
+                    <div class="result-title">
+                        Waiting for tests...
+                    </div>
+
+                    <div class="result-message">
+                        Run the tests above to verify the connection.
+                    </div>
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <section class="card">
+
+            <h2>Security</h2>
+
+            <ul>
+                <li>
+                    No GitHub token is stored in this browser application.
+                </li>
+
+                <li>
+                    The GitHub App private key remains in Cloudflare.
+                </li>
+
+                <li>
+                    The browser communicates only with the Cloudflare Worker.
+                </li>
+
+                <li>
+                    The GitHub repository is accessed using a short-lived
+                    GitHub App installation token.
+                </li>
+            </ul>
+
+        </section>
+
+
+        <footer>
+            <p>
+                Test 3 — LandViz Media
+            </p>
+        </footer>
+
+    </main>
+
+    <script src="app.js"></script>
+
+</body>
+</html>
