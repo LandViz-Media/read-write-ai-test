@@ -45,23 +45,20 @@
         <div class="form-grid">
 
             <div class="form-group full-width">
-                <label for="studyName">
-                    Study Name
-                </label>
+                <label for="studyName">Study Name</label>
 
                 <input
                     type="text"
                     id="studyName"
                     name="studyName"
+                    maxlength="150"
                     placeholder="e.g., Ogden–Boone School Study"
                 >
             </div>
 
 
             <div class="form-group">
-                <label for="city1">
-                    City 1
-                </label>
+                <label for="city1">City 1</label>
 
                 <input
                     type="text"
@@ -74,9 +71,7 @@
 
 
             <div class="form-group">
-                <label for="city2">
-                    City 2
-                </label>
+                <label for="city2">City 2</label>
 
                 <input
                     type="text"
@@ -89,13 +84,9 @@
 
 
             <div class="form-group buffer-group">
-
-                <label for="bufferDistance">
-                    Buffer Distance
-                </label>
+                <label for="bufferDistance">Buffer Distance</label>
 
                 <div class="input-with-unit">
-
                     <input
                         type="number"
                         id="bufferDistance"
@@ -106,23 +97,18 @@
                         step="0.1"
                     >
 
-                    <span class="unit">
-                        miles
-                    </span>
-
+                    <span class="unit">miles</span>
                 </div>
 
                 <div class="field-help">
                     0–25 miles, in 0.1-mile increments
                 </div>
-
             </div>
 
         </div>
 
 
         <div class="setup-actions">
-
             <button
                 id="createStudyAreaButton"
                 class="test-button primary"
@@ -130,7 +116,6 @@
             >
                 Create Study Area
             </button>
-
         </div>
 
     </section>
@@ -143,29 +128,18 @@
     <section class="card">
 
         <div class="map-header">
-
             <div>
                 <h2>Study Area</h2>
 
-                <p
-                    id="mapStatus"
-                    class="map-status"
-                >
+                <p id="mapStatus" class="map-status">
                     Enter two cities and create a study area.
                 </p>
             </div>
-
         </div>
-
 
         <div id="map" class="map-container"></div>
 
-
-        <div
-            id="locationDetails"
-            class="location-details"
-            hidden
-        >
+        <div id="locationDetails" class="location-details" hidden>
 
             <div class="location-detail">
                 <strong>City 1</strong>
@@ -188,21 +162,37 @@
 
 
     <!-- ==================================================
-         STUDY ACTIONS
+         STUDY REVIEW / PERSISTENCE
          ================================================== -->
 
     <section class="card">
 
-        <h2>Study Actions</h2>
+        <h2>Review &amp; Save</h2>
 
         <p class="section-description">
-            Review the study area before saving or continuing
-            to OSM data collection.
+            Review the map and resolved locations above. Saving
+            creates a persistent study record and GeoJSON study
+            area in the private GitHub repository.
         </p>
 
+        <div id="saveSummary" class="save-summary" hidden>
+            <div class="save-summary-item">
+                <strong>Study ID</strong>
+                <span id="studyIdDisplay">—</span>
+            </div>
+
+            <div class="save-summary-item">
+                <strong>Status</strong>
+                <span id="studyStatusDisplay">—</span>
+            </div>
+
+            <div class="save-summary-item">
+                <strong>Repository</strong>
+                <span id="repositoryDisplay">Private GitHub repository</span>
+            </div>
+        </div>
 
         <div class="study-actions">
-
             <button
                 id="saveStudyButton"
                 class="test-button"
@@ -212,7 +202,6 @@
                 Save Study
             </button>
 
-
             <button
                 id="continueButton"
                 class="test-button primary"
@@ -221,7 +210,6 @@
             >
                 Continue to OSM Data Collection →
             </button>
-
         </div>
 
     </section>
@@ -236,19 +224,15 @@
         <h2>Test Results</h2>
 
         <div id="results">
-
             <div class="result waiting">
-
                 <div class="result-title">
                     Waiting for study setup...
                 </div>
 
                 <div class="result-message">
-                    Test 3B.2 adds geocoding and an interactive map.
+                    Test 3B.3 adds persistence through the Cloudflare Worker and GitHub App.
                 </div>
-
             </div>
-
         </div>
 
     </section>
@@ -263,27 +247,25 @@
         <h2>Security</h2>
 
         <ul>
-
             <li>
-                No GitHub token is stored in this browser
-                application.
+                No GitHub token or GitHub App private key is stored
+                in this browser application.
             </li>
 
             <li>
-                The GitHub App private key remains in
-                Cloudflare.
+                GitHub authentication remains in Cloudflare through
+                the GitHub App installation.
             </li>
 
             <li>
-                City geocoding is performed client-side using
-                the public Nominatim service.
+                City geocoding is performed client-side using the
+                public Nominatim service.
             </li>
 
             <li>
-                The study is not sent to the Worker during
-                Test 3B.2.
+                The browser sends the reviewed study to the Worker;
+                the Worker is responsible for writing it to GitHub.
             </li>
-
         </ul>
 
     </section>

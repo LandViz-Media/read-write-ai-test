@@ -3,20 +3,23 @@
  *
  * Responsibility:
  *   Controls the browser-side Study Setup workflow,
- *   geocoding, Leaflet map, and study-area geometry.
+ *   geocoding, Leaflet map, study-area geometry, and
+ *   persistence of the reviewed study through the
+ *   Cloudflare Worker.
  *
- * Test 3B.2:
- *   - Geocode two cities with Nominatim.
- *   - Display both cities on an interactive Leaflet map.
- *   - Calculate the geographic extent of both locations.
- *   - Apply the requested buffer to that extent.
- *   - Display the resulting study area.
+ * Test 3B.3:
+ *   - Preserve the Test 3B.2 geocoding and map workflow.
+ *   - Enable Save Study after the study area has been reviewed.
+ *   - Generate a stable study ID in the browser.
+ *   - Send the reviewed study to the Worker through the
+ *     application-level study API.
+ *   - The Worker/GitHub App remains responsible for GitHub auth
+ *     and writing the private repository files.
  *
- * Important:
- *   The buffer is applied to the combined geographic extent,
- *   NOT as a circular buffer around either city.
- *
- * No Worker calls or GitHub operations occur in this milestone.
+ * Important geometry rule:
+ *   The buffer is applied to the combined geographic extent
+ *   containing both city points. It is NOT a circular buffer
+ *   around either city.
  */
 
 
@@ -60,6 +63,18 @@ const city2Resolved =
 const studyAreaDimensions =
     document.getElementById("studyAreaDimensions");
 
+const saveSummary =
+    document.getElementById("saveSummary");
+
+const studyIdDisplay =
+    document.getElementById("studyIdDisplay");
+
+const studyStatusDisplay =
+    document.getElementById("studyStatusDisplay");
+
+const repositoryDisplay =
+    document.getElementById("repositoryDisplay");
+
 const resultsContainer =
     document.getElementById("results");
 
@@ -69,13 +84,33 @@ const resultsContainer =
    ============================================================ */
 
 /*
- * Nominatim is a public geocoding service operated by the
- * OpenStreetMap Foundation.
+ * Application API endpoint.
  *
- * We identify this application with a descriptive User-Agent
- * through the browser's HTTP request headers where supported.
+ * The browser talks only to the Cloudflare Worker. It never
+ * receives the GitHub App private key or an installation token.
  *
- * No credentials are required.
+ * Test 3B.3 expects the Worker to expose:
+ *
+ *   POST /api/v1/studies
+ *
+ * The request body is the complete reviewed study object plus
+ * its GeoJSON study-area artifact. The Worker should persist:
+ *
+ *   data/studies.json
+ *   data/studyAreas/{studyId}.geojson
+ *
+ * and return the persisted study ID and file paths.
+ */
+
+const API_BASE_URL =
+    "https://read-write-ai-test-api.cjseeger.workers.dev";
+
+const STUDY_CREATE_ENDPOINT =
+    "/api/v1/studies";
+
+
+/*
+ * Public geocoder.
  */
 
 const NOMINATIM_URL =
@@ -84,13 +119,20 @@ const NOMINATIM_URL =
 
 /*
  * One degree of latitude is approximately this many miles.
- *
- * Longitude varies with latitude, so longitude buffering is
- * calculated using the latitude of the study area's center.
+ * Longitude varies with latitude and is adjusted below.
  */
 
 const MILES_PER_DEGREE_LATITUDE =
     69.0;
+
+
+/*
+ * Repository information is display metadata only. The browser
+ * does not use it for authentication.
+ */
+
+const REPOSITORY_LABEL =
+    "LandViz-Media/read-write-ai-test (private)";
 
 
 /* ============================================================
@@ -105,6 +147,8 @@ let studyAreaLayer = null;
 
 let currentStudy = null;
 
+let studySaved = false;
+
 
 /* ============================================================
    MAP INITIALIZATION
@@ -112,8 +156,6 @@ let currentStudy = null;
 
 /**
  * Initialize the Leaflet map.
- *
- * The initial view is centered approximately on Iowa.
  */
 function initializeMap() {
 
@@ -125,28 +167,15 @@ function initializeMap() {
     );
 
 
-    /*
-     * Use the primary OpenStreetMap tile hostname rather than
-     * the subdomain template. This keeps the tile source simple
-     * for this prototype.
-     */
-
     L.tileLayer(
         "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
         {
             maxZoom: 19,
-
             attribution:
                 '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }
     ).addTo(map);
 
-
-    /*
-     * The map is inside a card whose dimensions can settle after
-     * Leaflet initializes. invalidateSize() tells Leaflet to
-     * recalculate the container dimensions.
-     */
 
     requestAnimationFrame(() => {
         map.invalidateSize({
@@ -180,17 +209,7 @@ function validateStudyInputs() {
         Number(bufferDistanceInput.value);
 
 
-    if (!studyName) {
-        return false;
-    }
-
-
-    if (!city1) {
-        return false;
-    }
-
-
-    if (!city2) {
+    if (!studyName || !city1 || !city2) {
         return false;
     }
 
@@ -229,6 +248,7 @@ function updateCreateButton() {
  * @param {string} message
  * @param {"waiting"|"running"|"pass"|"fail"} status
  * @param {object|null} data
+ * @returns {HTMLElement}
  */
 function showResult(
     title,
@@ -296,69 +316,44 @@ function showResult(
 /**
  * Geocode a city using Nominatim.
  *
+ * The search is restricted to U.S. settlements and prefers an
+ * exact city/town/village match in Iowa. This helps prevent a
+ * query such as "Boone, Iowa" from resolving to Boone County.
+ *
  * @param {string} query
  * @returns {Promise<object>}
  */
 async function geocodeCity(query) {
 
+    const requestedName =
+        query
+            .split(",")[0]
+            .trim()
+            .toLowerCase();
+
+
     const url =
         new URL(NOMINATIM_URL);
 
 
-    /*
-     * Restrict the search to the United States and to
-     * settlement-level places. This prevents a query such as
-     * "Boone, Iowa" from resolving to Boone County.
-     */
-
-    url.searchParams.set(
-        "q",
-        query
-    );
-
-
-    url.searchParams.set(
-        "format",
-        "jsonv2"
-    );
-
-
-    url.searchParams.set(
-        "limit",
-        "10"
-    );
-
-
-    url.searchParams.set(
-        "addressdetails",
-        "1"
-    );
-
-
-    url.searchParams.set(
-        "featuretype",
-        "settlement"
-    );
-
-
-    url.searchParams.set(
-        "countrycodes",
-        "us"
-    );
+    url.searchParams.set("q", query);
+    url.searchParams.set("format", "jsonv2");
+    url.searchParams.set("limit", "10");
+    url.searchParams.set("addressdetails", "1");
+    url.searchParams.set("featuretype", "settlement");
+    url.searchParams.set("countrycodes", "us");
 
 
     const response =
         await fetch(url.toString(), {
             method: "GET",
             headers: {
-                "Accept":
-                    "application/json"
+                "Accept": "application/json"
             }
         });
 
 
     if (!response.ok) {
-
         throw new Error(
             `Geocoding request failed with HTTP ${response.status}.`
         );
@@ -373,16 +368,11 @@ async function geocodeCity(query) {
         !Array.isArray(results) ||
         results.length === 0
     ) {
-
         throw new Error(
             `No settlement could be found for "${query}".`
         );
     }
 
-
-    /*
-     * Prefer an Iowa result.
-     */
 
     const iowaResults =
         results.filter(result => {
@@ -394,7 +384,6 @@ async function geocodeCity(query) {
                 address.state === "Iowa" ||
                 address["ISO3166-2-lvl4"] === "US-IA"
             );
-
         });
 
 
@@ -404,24 +393,11 @@ async function geocodeCity(query) {
             : results;
 
 
-    /*
-     * Prefer a candidate whose city/town/village/municipality
-     * name matches the user's city name.
-     */
-
-    const requestedName =
-        query
-            .split(",")[0]
-            .trim()
-            .toLowerCase();
-
-
     const exactMatch =
         candidates.find(result => {
 
             const address =
                 result.address || {};
-
 
             const placeNames = [
                 address.city,
@@ -430,20 +406,39 @@ async function geocodeCity(query) {
                 address.municipality,
                 address.hamlet
             ]
-            .filter(Boolean)
-            .map(value =>
-                value.toLowerCase()
-            );
+                .filter(Boolean)
+                .map(value => value.toLowerCase());
 
-
-            return placeNames.includes(
-                requestedName
-            );
-
+            return placeNames.includes(requestedName);
         });
 
 
-    return exactMatch || candidates[0];
+    const selected =
+        exactMatch || candidates[0];
+
+
+    /*
+     * Guard against accepting a non-Iowa result when the user
+     * supplied Iowa. This is intentionally conservative because
+     * study provenance matters.
+     */
+
+    const selectedState =
+        selected.address?.state || "";
+
+    if (
+        /iowa/i.test(query) &&
+        selectedState &&
+        selectedState !== "Iowa"
+    ) {
+        throw new Error(
+            `The geocoder did not return an Iowa settlement for "${query}". ` +
+            `It returned "${selected.display_name}".`
+        );
+    }
+
+
+    return selected;
 }
 
 
@@ -452,8 +447,8 @@ async function geocodeCity(query) {
    ============================================================ */
 
 /**
- * Convert a Nominatim result into the compact location
- * object used by the application.
+ * Convert a Nominatim result into the compact location object
+ * stored in the study record.
  *
  * @param {string} input
  * @param {object} result
@@ -468,8 +463,17 @@ function createLocationObject(input, result) {
         Number(result.lon);
 
 
-    return {
+    if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude)
+    ) {
+        throw new Error(
+            `The geocoder returned invalid coordinates for "${input}".`
+        );
+    }
 
+
+    return {
         input: input,
 
         name:
@@ -477,23 +481,27 @@ function createLocationObject(input, result) {
             result.address?.town ||
             result.address?.village ||
             result.address?.municipality ||
+            result.address?.hamlet ||
             result.display_name,
 
         state:
-            result.address?.state ||
-            "",
+            result.address?.state || "",
 
         country:
-            result.address?.country ||
-            "",
+            result.address?.country || "",
 
         latitude: latitude,
 
         longitude: longitude,
 
         displayName:
-            result.display_name
+            result.display_name,
 
+        osmType:
+            result.osm_type || "",
+
+        osmId:
+            result.osm_id || null
     };
 }
 
@@ -509,11 +517,7 @@ function createLocationObject(input, result) {
  * @returns {number}
  */
 function milesToLatitudeDegrees(miles) {
-
-    return (
-        miles /
-        MILES_PER_DEGREE_LATITUDE
-    );
+    return miles / MILES_PER_DEGREE_LATITUDE;
 }
 
 
@@ -524,92 +528,49 @@ function milesToLatitudeDegrees(miles) {
  * @param {number} latitude
  * @returns {number}
  */
-function milesToLongitudeDegrees(
-    miles,
-    latitude
-) {
+function milesToLongitudeDegrees(miles, latitude) {
 
     const radians =
-        latitude *
-        Math.PI /
-        180;
-
+        latitude * Math.PI / 180;
 
     const milesPerDegreeLongitude =
-        MILES_PER_DEGREE_LATITUDE *
-        Math.cos(radians);
+        MILES_PER_DEGREE_LATITUDE * Math.cos(radians);
 
 
-    return (
-        miles /
-        milesPerDegreeLongitude
-    );
+    return miles / milesPerDegreeLongitude;
 }
 
 
 /**
- * Create the buffered geographic extent containing
- * both city locations.
+ * Create the buffered geographic extent containing both cities.
  *
- * The buffer expands all four sides of the combined
- * geographic extent.
+ * The buffer expands all four sides of the combined extent.
  *
  * @param {object} city1
  * @param {object} city2
  * @param {number} bufferMiles
  * @returns {object}
  */
-function calculateStudyExtent(
-    city1,
-    city2,
-    bufferMiles
-) {
+function calculateStudyExtent(city1, city2, bufferMiles) {
 
     const minLatitude =
-        Math.min(
-            city1.latitude,
-            city2.latitude
-        );
-
+        Math.min(city1.latitude, city2.latitude);
 
     const maxLatitude =
-        Math.max(
-            city1.latitude,
-            city2.latitude
-        );
-
+        Math.max(city1.latitude, city2.latitude);
 
     const minLongitude =
-        Math.min(
-            city1.longitude,
-            city2.longitude
-        );
-
+        Math.min(city1.longitude, city2.longitude);
 
     const maxLongitude =
-        Math.max(
-            city1.longitude,
-            city2.longitude
-        );
+        Math.max(city1.longitude, city2.longitude);
 
-
-    /*
-     * Use the center latitude to calculate the longitude
-     * distance represented by one degree.
-     */
 
     const centerLatitude =
-        (
-            minLatitude +
-            maxLatitude
-        ) / 2;
-
+        (minLatitude + maxLatitude) / 2;
 
     const latitudeBuffer =
-        milesToLatitudeDegrees(
-            bufferMiles
-        );
-
+        milesToLatitudeDegrees(bufferMiles);
 
     const longitudeBuffer =
         milesToLongitudeDegrees(
@@ -619,29 +580,23 @@ function calculateStudyExtent(
 
 
     return {
-
         minLatitude:
-            minLatitude -
-            latitudeBuffer,
+            minLatitude - latitudeBuffer,
 
         maxLatitude:
-            maxLatitude +
-            latitudeBuffer,
+            maxLatitude + latitudeBuffer,
 
         minLongitude:
-            minLongitude -
-            longitudeBuffer,
+            minLongitude - longitudeBuffer,
 
         maxLongitude:
-            maxLongitude +
-            longitudeBuffer
-
+            maxLongitude + longitudeBuffer
     };
 }
 
 
 /**
- * Create a Leaflet LatLngBounds object from an extent.
+ * Convert an extent to Leaflet bounds.
  *
  * @param {object} extent
  * @returns {L.LatLngBounds}
@@ -662,6 +617,71 @@ function extentToLeafletBounds(extent) {
 
 
 /* ============================================================
+   GEOJSON
+   ============================================================ */
+
+/**
+ * Create the study-area GeoJSON artifact.
+ *
+ * The polygon is deliberately simple and represents the
+ * buffered rectangular geographic extent used by the study.
+ *
+ * @param {object} study
+ * @returns {object}
+ */
+function createStudyAreaGeoJSON(study) {
+
+    const extent =
+        study.studyArea.extent;
+
+    return {
+        type: "FeatureCollection",
+        name: study.id,
+        features: [
+            {
+                type: "Feature",
+                properties: {
+                    studyId: study.id,
+                    studyName: study.name,
+                    application: study.application,
+                    method: study.studyArea.method,
+                    bufferDistance:
+                        study.buffer.distance,
+                    bufferUnits:
+                        study.buffer.units
+                },
+                geometry: {
+                    type: "Polygon",
+                    coordinates: [[
+                        [
+                            extent.minLongitude,
+                            extent.minLatitude
+                        ],
+                        [
+                            extent.maxLongitude,
+                            extent.minLatitude
+                        ],
+                        [
+                            extent.maxLongitude,
+                            extent.maxLatitude
+                        ],
+                        [
+                            extent.minLongitude,
+                            extent.maxLatitude
+                        ],
+                        [
+                            extent.minLongitude,
+                            extent.minLatitude
+                        ]
+                    ]]
+                }
+            }
+        ]
+    };
+}
+
+
+/* ============================================================
    MAP DISPLAY
    ============================================================ */
 
@@ -671,11 +691,8 @@ function extentToLeafletBounds(extent) {
 function clearCityMarkers() {
 
     cityMarkers.forEach(marker => {
-
         map.removeLayer(marker);
-
     });
-
 
     cityMarkers = [];
 }
@@ -687,11 +704,7 @@ function clearCityMarkers() {
 function clearStudyArea() {
 
     if (studyAreaLayer !== null) {
-
-        map.removeLayer(
-            studyAreaLayer
-        );
-
+        map.removeLayer(studyAreaLayer);
         studyAreaLayer = null;
     }
 }
@@ -704,20 +717,11 @@ function clearStudyArea() {
  * @param {object} city2
  * @param {object} extent
  */
-function displayStudyArea(
-    city1,
-    city2,
-    extent
-) {
+function displayStudyArea(city1, city2, extent) {
 
     clearCityMarkers();
-
     clearStudyArea();
 
-
-    /*
-     * City markers
-     */
 
     const marker1 =
         L.marker([
@@ -741,21 +745,11 @@ function displayStudyArea(
         );
 
 
-    cityMarkers.push(marker1);
-    cityMarkers.push(marker2);
+    cityMarkers.push(marker1, marker2);
 
-
-    /*
-     * Study area.
-     *
-     * This is intentionally a rectangle representing the
-     * buffered geographic extent.
-     */
 
     const bounds =
-        extentToLeafletBounds(
-            extent
-        );
+        extentToLeafletBounds(extent);
 
 
     studyAreaLayer =
@@ -769,19 +763,9 @@ function displayStudyArea(
         .addTo(map);
 
 
-    /*
-     * Fit the map to the resulting study area.
-     */
-
-    /*
-     * Recalculate the map container dimensions before fitting.
-     * This is important because the map lives inside a page card.
-     */
-
     map.invalidateSize({
         pan: false
     });
-
 
     map.fitBounds(
         bounds,
@@ -792,13 +776,7 @@ function displayStudyArea(
     );
 
 
-    /*
-     * A second size check after the layout has settled prevents
-     * partial tile rendering when the page has just loaded.
-     */
-
     setTimeout(() => {
-
         map.invalidateSize({
             pan: false
         });
@@ -810,13 +788,8 @@ function displayStudyArea(
                 maxZoom: 12
             }
         );
-
     }, 100);
 
-
-    /*
-     * Add a popup explaining what the rectangle represents.
-     */
 
     studyAreaLayer.bindPopup(
         `<strong>Study Area</strong><br>` +
@@ -859,70 +832,39 @@ function escapeHtml(value) {
 function calculateDimensions(extent) {
 
     const centerLatitude =
-        (
-            extent.minLatitude +
-            extent.maxLatitude
-        ) / 2;
-
+        (extent.minLatitude + extent.maxLatitude) / 2;
 
     const latitudeMiles =
-        (
-            extent.maxLatitude -
-            extent.minLatitude
-        ) *
+        (extent.maxLatitude - extent.minLatitude) *
         MILES_PER_DEGREE_LATITUDE;
 
-
     const longitudeMiles =
-        (
-            extent.maxLongitude -
-            extent.minLongitude
-        ) *
+        (extent.maxLongitude - extent.minLongitude) *
         MILES_PER_DEGREE_LATITUDE *
-        Math.cos(
-            centerLatitude *
-            Math.PI /
-            180
-        );
+        Math.cos(centerLatitude * Math.PI / 180);
 
 
     return {
-
-        widthMiles:
-            longitudeMiles,
-
-        heightMiles:
-            latitudeMiles
-
+        widthMiles: longitudeMiles,
+        heightMiles: latitudeMiles
     };
 }
 
 
 /**
  * Update the location detail cards.
- *
- * @param {object} city1
- * @param {object} city2
- * @param {object} extent
  */
-function updateLocationDetails(
-    city1,
-    city2,
-    extent
-) {
+function updateLocationDetails(city1, city2, extent) {
 
     city1Resolved.textContent =
         city1.displayName;
-
 
     city2Resolved.textContent =
         city2.displayName;
 
 
     const dimensions =
-        calculateDimensions(
-            extent
-        );
+        calculateDimensions(extent);
 
 
     studyAreaDimensions.textContent =
@@ -930,8 +872,219 @@ function updateLocationDetails(
         `${dimensions.heightMiles.toFixed(1)} miles`;
 
 
-    locationDetails.hidden =
-        false;
+    locationDetails.hidden = false;
+}
+
+
+/* ============================================================
+   STUDY IDENTIFIER
+   ============================================================ */
+
+/**
+ * Generate a browser-side study ID.
+ *
+ * The date portion makes the ID easy to recognize while the
+ * time/random suffix prevents ordinary collisions between study
+ * creation attempts.
+ *
+ * @returns {string}
+ */
+function generateStudyId() {
+
+    const now =
+        new Date();
+
+    const year =
+        now.getFullYear();
+
+    const month =
+        String(now.getMonth() + 1).padStart(2, "0");
+
+    const day =
+        String(now.getDate()).padStart(2, "0");
+
+    const time =
+        [
+            now.getHours(),
+            now.getMinutes(),
+            now.getSeconds()
+        ]
+        .map(value =>
+            String(value).padStart(2, "0")
+        )
+        .join("");
+
+
+    const random =
+        Math.random()
+            .toString(36)
+            .slice(2, 7);
+
+
+    return `study-${year}${month}${day}-${time}-${random}`;
+}
+
+
+/* ============================================================
+   STUDY OBJECT
+   ============================================================ */
+
+/**
+ * Build the persistent study object from the reviewed state.
+ *
+ * @returns {object}
+ */
+function buildStudyRecord() {
+
+    if (currentStudy === null) {
+        throw new Error(
+            "There is no reviewed study to save."
+        );
+    }
+
+
+    const now =
+        new Date().toISOString();
+
+
+    return {
+        id: currentStudy.id,
+
+        name: currentStudy.name,
+
+        application: "osm-scout",
+
+        created: currentStudy.created,
+
+        updated: now,
+
+        status: "study-area-created",
+
+        cities: currentStudy.cities,
+
+        buffer: currentStudy.buffer,
+
+        studyArea: currentStudy.studyArea,
+
+        provenance: {
+            geocoder: "Nominatim",
+            geocodedAt: currentStudy.geocodedAt,
+            reviewedInBrowser: true
+        }
+    };
+}
+
+
+/* ============================================================
+   SAVE SUMMARY
+   ============================================================ */
+
+/**
+ * Update the save summary shown after the study is created.
+ */
+function updateSaveSummary(study, statusText = "Ready to save") {
+
+    studyIdDisplay.textContent =
+        study.id;
+
+    studyStatusDisplay.textContent =
+        statusText;
+
+    repositoryDisplay.textContent =
+        REPOSITORY_LABEL;
+
+    saveSummary.hidden = false;
+}
+
+
+/* ============================================================
+   WORKER RESPONSE HANDLING
+   ============================================================ */
+
+/**
+ * Convert a failed Worker response into a useful error message.
+ *
+ * @param {Response} response
+ * @returns {Promise<Error>}
+ */
+async function createApiError(response) {
+
+    let payload = null;
+
+    try {
+        payload = await response.json();
+    } catch (error) {
+        /* The response was not JSON. Use the HTTP status below. */
+    }
+
+
+    const serverMessage =
+        payload?.message ||
+        payload?.error ||
+        payload?.details ||
+        "";
+
+
+    return new Error(
+        serverMessage
+            ? `${serverMessage} (HTTP ${response.status})`
+            : `Study save request failed with HTTP ${response.status}.`
+    );
+}
+
+
+/**
+ * Persist the reviewed study through the Cloudflare Worker.
+ *
+ * @param {object} study
+ * @returns {Promise<object>}
+ */
+async function saveStudyToWorker(study) {
+
+    const geojson =
+        createStudyAreaGeoJSON(study);
+
+
+    const payload = {
+        study: study,
+        studyArea: geojson
+    };
+
+
+    const response =
+        await fetch(
+            `${API_BASE_URL}${STUDY_CREATE_ENDPOINT}`,
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+
+                body: JSON.stringify(payload)
+            }
+        );
+
+
+    if (!response.ok) {
+        throw await createApiError(response);
+    }
+
+
+    const result =
+        await response.json();
+
+
+    if (result.ok !== true) {
+        throw new Error(
+            result.message ||
+            "The Worker did not confirm that the study was saved."
+        );
+    }
+
+
+    return result;
 }
 
 
@@ -966,24 +1119,13 @@ async function createStudyArea() {
         city2Input.value.trim();
 
     const buffer =
-        Number(
-            bufferDistanceInput.value
-        );
+        Number(bufferDistanceInput.value);
 
 
-    /*
-     * Disable the button while the geocoding requests run.
-     */
-
-    createStudyAreaButton.disabled =
-        true;
-
-
-    saveStudyButton.disabled =
-        true;
-
-    continueButton.disabled =
-        true;
+    createStudyAreaButton.disabled = true;
+    saveStudyButton.disabled = true;
+    continueButton.disabled = true;
+    studySaved = false;
 
 
     mapStatus.textContent =
@@ -1001,15 +1143,12 @@ async function createStudyArea() {
     try {
 
         /*
-         * Nominatim asks clients to avoid sending many
-         * simultaneous requests. We therefore geocode the
-         * cities sequentially.
+         * Keep the requests sequential because Nominatim asks
+         * clients to avoid bursts of requests.
          */
 
         const city1Result =
-            await geocodeCity(
-                city1InputValue
-            );
+            await geocodeCity(city1InputValue);
 
 
         runningResult
@@ -1019,9 +1158,7 @@ async function createStudyArea() {
 
 
         const city2Result =
-            await geocodeCity(
-                city2InputValue
-            );
+            await geocodeCity(city2InputValue);
 
 
         const city1 =
@@ -1030,17 +1167,12 @@ async function createStudyArea() {
                 city1Result
             );
 
-
         const city2 =
             createLocationObject(
                 city2InputValue,
                 city2Result
             );
 
-
-        /*
-         * Calculate the buffered combined geographic extent.
-         */
 
         const extent =
             calculateStudyExtent(
@@ -1050,37 +1182,27 @@ async function createStudyArea() {
             );
 
 
-        /*
-         * Store the preliminary study in browser memory.
-         */
+        const now =
+            new Date().toISOString();
+
 
         currentStudy = {
-
+            id: generateStudyId(),
             name: studyName,
-
-            cities: [
-                city1,
-                city2
-            ],
-
+            application: "osm-scout",
+            created: now,
+            geocodedAt: now,
+            cities: [city1, city2],
             buffer: {
                 distance: buffer,
                 units: "miles"
             },
-
             studyArea: {
-                method:
-                    "city-extent-buffer",
-
+                method: "city-extent-buffer",
                 extent: extent
             }
-
         };
 
-
-        /*
-         * Display the results.
-         */
 
         displayStudyArea(
             city1,
@@ -1095,52 +1217,44 @@ async function createStudyArea() {
             extent
         );
 
+        updateSaveSummary(
+            currentStudy,
+            "Ready to save"
+        );
+
 
         mapStatus.textContent =
-            "Study area created. Review the map before continuing.";
+            "Study area created. Review the map before saving.";
 
 
         runningResult.className =
             "result pass";
-
 
         runningResult
             .querySelector(".result-title")
             .textContent =
             "✓ Study Area Created";
 
-
         runningResult
             .querySelector(".result-message")
             .textContent =
             `Both cities were geocoded successfully. ` +
-            `The combined extent was buffered by ${buffer.toFixed(1)} miles on all four sides.`;
+            `The combined extent was buffered by ${buffer.toFixed(1)} miles on all four sides. ` +
+            `Study ID: ${currentStudy.id}`;
 
 
-        /*
-         * The study area now exists and can be reviewed.
-         *
-         * Save is still disabled because persistence belongs
-         * to Test 3B.3.
-         *
-         * Continue is also still disabled until the study is
-         * saved and later workflow logic is implemented.
-         */
+        saveStudyButton.disabled = false;
 
     } catch (error) {
 
-        currentStudy =
-            null;
-
+        currentStudy = null;
+        studySaved = false;
 
         clearCityMarkers();
-
         clearStudyArea();
 
-
-        locationDetails.hidden =
-            true;
-
+        locationDetails.hidden = true;
+        saveSummary.hidden = true;
 
         mapStatus.textContent =
             "Unable to create the study area.";
@@ -1149,12 +1263,10 @@ async function createStudyArea() {
         runningResult.className =
             "result fail";
 
-
         runningResult
             .querySelector(".result-title")
             .textContent =
             "Study Area Creation Failed";
-
 
         runningResult
             .querySelector(".result-message")
@@ -1162,10 +1274,217 @@ async function createStudyArea() {
             error.message;
 
     } finally {
-
         updateCreateButton();
-
     }
+}
+
+
+/* ============================================================
+   SAVE STUDY
+   ============================================================ */
+
+/**
+ * Save the reviewed study through the Worker.
+ */
+async function saveStudy() {
+
+    if (currentStudy === null) {
+
+        showResult(
+            "Nothing to Save",
+            "Create and review a study area first.",
+            "fail"
+        );
+
+        return;
+    }
+
+
+    if (studySaved) {
+
+        showResult(
+            "Study Already Saved",
+            `Study ${currentStudy.id} has already been persisted.`,
+            "pass"
+        );
+
+        return;
+    }
+
+
+    saveStudyButton.disabled = true;
+    continueButton.disabled = true;
+    createStudyAreaButton.disabled = true;
+
+    mapStatus.textContent =
+        "Saving the reviewed study to the private GitHub repository...";
+
+
+    updateSaveSummary(
+        currentStudy,
+        "Saving..."
+    );
+
+
+    const runningResult =
+        showResult(
+            "Saving Study",
+            "Sending the reviewed study to the Cloudflare Worker...",
+            "running"
+        );
+
+
+    try {
+
+        const study =
+            buildStudyRecord();
+
+        const apiResult =
+            await saveStudyToWorker(study);
+
+
+        studySaved = true;
+
+        currentStudy = {
+            ...study,
+            updated: study.updated,
+            persistence: apiResult
+        };
+
+
+        updateSaveSummary(
+            currentStudy,
+            "Saved to GitHub"
+        );
+
+
+        mapStatus.textContent =
+            "Study saved. You may continue to OSM data collection.";
+
+
+        runningResult.className =
+            "result pass";
+
+        runningResult
+            .querySelector(".result-title")
+            .textContent =
+            "✓ Study Saved";
+
+        runningResult
+            .querySelector(".result-message")
+            .textContent =
+            `Study ${study.id} was accepted by the Worker and persisted to the private GitHub repository.`;
+
+
+        runningResult.appendChild(
+            createDataPre(
+                {
+                    studyId: study.id,
+                    studiesFile:
+                        apiResult.files?.studies ||
+                        "data/studies.json",
+                    studyAreaFile:
+                        apiResult.files?.studyArea ||
+                        `data/studyAreas/${study.id}.geojson`
+                }
+            )
+        );
+
+
+        continueButton.disabled = false;
+
+    } catch (error) {
+
+        studySaved = false;
+
+        updateSaveSummary(
+            currentStudy,
+            "Save failed"
+        );
+
+        mapStatus.textContent =
+            "The study was not confirmed as saved.";
+
+
+        runningResult.className =
+            "result fail";
+
+        runningResult
+            .querySelector(".result-title")
+            .textContent =
+            "Study Save Failed";
+
+        runningResult
+            .querySelector(".result-message")
+            .textContent =
+            error.message;
+
+
+        /*
+         * Leave Save enabled so the user can retry after fixing
+         * an API or network problem. No duplicate is created by
+         * this browser-side code because the same study ID is
+         * reused on retry.
+         */
+
+        saveStudyButton.disabled = false;
+
+    } finally {
+
+        if (!studySaved) {
+            updateCreateButton();
+        }
+    }
+}
+
+
+/**
+ * Create a preformatted result element.
+ *
+ * @param {object} data
+ * @returns {HTMLElement}
+ */
+function createDataPre(data) {
+
+    const pre =
+        document.createElement("pre");
+
+    pre.textContent =
+        JSON.stringify(data, null, 2);
+
+    return pre;
+}
+
+
+/* ============================================================
+   CONTINUE
+   ============================================================ */
+
+/**
+ * Continue to the next workflow milestone.
+ *
+ * Test 3B.3 does not yet collect Overpass data. This button
+ * simply proves that the persisted study can be handed to the
+ * next stage without creating another study.
+ */
+function continueToOsmCollection() {
+
+    if (!studySaved || currentStudy === null) {
+        return;
+    }
+
+
+    showResult(
+        "Ready for OSM Data Collection",
+        `Study ${currentStudy.id} is saved and ready for the next milestone. ` +
+        `OSM/Overpass collection will be implemented next.`,
+        "pass",
+        {
+            studyId: currentStudy.id,
+            status: currentStudy.status,
+            nextStep: "osm-data-collection"
+        }
+    );
 }
 
 
@@ -1175,25 +1494,34 @@ async function createStudyArea() {
 
 studyNameInput.addEventListener(
     "input",
-    updateCreateButton
+    () => {
+        studySaved = false;
+        updateCreateButton();
+    }
 );
-
 
 city1Input.addEventListener(
     "input",
-    updateCreateButton
+    () => {
+        studySaved = false;
+        updateCreateButton();
+    }
 );
-
 
 city2Input.addEventListener(
     "input",
-    updateCreateButton
+    () => {
+        studySaved = false;
+        updateCreateButton();
+    }
 );
-
 
 bufferDistanceInput.addEventListener(
     "input",
-    updateCreateButton
+    () => {
+        studySaved = false;
+        updateCreateButton();
+    }
 );
 
 
@@ -1206,38 +1534,14 @@ createStudyAreaButton.addEventListener(
     createStudyArea
 );
 
-
-/*
- * Save and Continue remain disabled in Test 3B.2.
- *
- * Persistence will be implemented in Test 3B.3.
- */
-
 saveStudyButton.addEventListener(
     "click",
-    () => {
-
-        showResult(
-            "Save Study",
-            "Study persistence will be implemented in Test 3B.3.",
-            "waiting"
-        );
-
-    }
+    saveStudy
 );
-
 
 continueButton.addEventListener(
     "click",
-    () => {
-
-        showResult(
-            "OSM Data Collection",
-            "OSM data collection will be implemented after study persistence.",
-            "waiting"
-        );
-
-    }
+    continueToOsmCollection
 );
 
 
@@ -1246,5 +1550,4 @@ continueButton.addEventListener(
    ============================================================ */
 
 initializeMap();
-
 updateCreateButton();
