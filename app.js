@@ -326,19 +326,20 @@ function showResult(
 async function geocodeCity(query) {
 
     const parsed = parseCityInput(query);
-    const requestedName = parsed.city.toLowerCase();
+    const requestedName = normalizePlaceName(parsed.city);
 
 
     /*
-     * First use Nominatim's structured search. This is much safer
-     * for a city/state input than asking Nominatim to interpret a
-     * free-form string such as "Jefferson, IA".
-     *
-     * Nominatim documents `city` and `state` as structured search
-     * fields and `featureType=settlement` as a way to restrict the
-     * result to inhabited places rather than counties or other
-     * administrative features.
+     * Nominatim supports both structured and free-form searches.
+     * We use several increasingly permissive searches, but every
+     * result still has to pass selectSettlementResult(). This means
+     * a county can never silently replace a city.
      */
+
+    const searchRequests = [];
+
+
+    /* 1. Structured city/state search. */
     const structuredUrl =
         new URL(NOMINATIM_URL);
 
@@ -351,62 +352,70 @@ async function geocodeCity(query) {
     structuredUrl.searchParams.set("addressdetails", "1");
     structuredUrl.searchParams.set("featuretype", "settlement");
 
-
-    const structuredResults =
-        await fetchNominatimResults(structuredUrl);
+    searchRequests.push(structuredUrl);
 
 
-    let selected =
-        selectSettlementResult(
-            structuredResults,
-            requestedName
-        );
+    /* 2. Free-form settlement search. */
+    const freeFormSettlementUrl =
+        new URL(NOMINATIM_URL);
+
+    freeFormSettlementUrl.searchParams.set(
+        "q",
+        `${parsed.city}, Iowa, United States`
+    );
+    freeFormSettlementUrl.searchParams.set("format", "jsonv2");
+    freeFormSettlementUrl.searchParams.set("limit", "10");
+    freeFormSettlementUrl.searchParams.set("addressdetails", "1");
+    freeFormSettlementUrl.searchParams.set("featuretype", "settlement");
+    freeFormSettlementUrl.searchParams.set("countrycodes", "us");
+
+    searchRequests.push(freeFormSettlementUrl);
 
 
     /*
-     * If structured search did not produce a valid settlement,
-     * make a second, broader settlement-only search. We still
-     * refuse to accept counties or other administrative features.
+     * 3. Final address-layer fallback. Some legitimate Iowa towns
+     * can be classified differently by OSM/Nominatim. We therefore
+     * allow the address layer as a final fallback, but still require
+     * an exact place-name match and Iowa settlement classification.
      */
-    if (!selected) {
+    const addressLayerUrl =
+        new URL(NOMINATIM_URL);
 
-        const fallbackUrl =
-            new URL(NOMINATIM_URL);
+    addressLayerUrl.searchParams.set(
+        "q",
+        `${parsed.city}, Iowa, United States`
+    );
+    addressLayerUrl.searchParams.set("format", "jsonv2");
+    addressLayerUrl.searchParams.set("limit", "20");
+    addressLayerUrl.searchParams.set("addressdetails", "1");
+    addressLayerUrl.searchParams.set("layer", "address");
+    addressLayerUrl.searchParams.set("countrycodes", "us");
 
-        fallbackUrl.searchParams.set(
-            "q",
-            `${parsed.city}, Iowa, United States`
-        );
-        fallbackUrl.searchParams.set("format", "jsonv2");
-        fallbackUrl.searchParams.set("limit", "10");
-        fallbackUrl.searchParams.set("addressdetails", "1");
-        fallbackUrl.searchParams.set("featuretype", "settlement");
-        fallbackUrl.searchParams.set("countrycodes", "us");
-
-
-        const fallbackResults =
-            await fetchNominatimResults(fallbackUrl);
+    searchRequests.push(addressLayerUrl);
 
 
-        selected =
+    for (const url of searchRequests) {
+
+        const results =
+            await fetchNominatimResults(url);
+
+        const selected =
             selectSettlementResult(
-                fallbackResults,
+                results,
                 requestedName
             );
+
+        if (selected) {
+            return selected;
+        }
     }
 
 
-    if (!selected) {
-        throw new Error(
-            `Nominatim did not return a valid Iowa settlement named "${parsed.city}". ` +
-            `The search was intentionally rejected rather than using a county or other administrative boundary.`
-        );
-    }
-
-
-    return selected;
+    throw new Error(
+        `Nominatim did not return a valid Iowa settlement named "${parsed.city}". ` +
+        `The search was intentionally rejected rather than using a county or other administrative feature.`
+    );
 }
-
 
 /**
  * Parse a city input such as "Jefferson, IA" or "Jefferson, Iowa".
@@ -448,6 +457,7 @@ async function fetchNominatimResults(url) {
     const response =
         await fetch(url.toString(), {
             method: "GET",
+            cache: "no-store",
             headers: {
                 "Accept": "application/json"
             }
@@ -489,20 +499,35 @@ function selectSettlementResult(results, requestedName) {
         results.filter(result => {
 
             const type =
-                String(result.type || result.addresstype || "")
+                String(result.type || "")
+                    .trim()
+                    .toLowerCase();
+
+            const addresstype =
+                String(result.addresstype || "")
+                    .trim()
                     .toLowerCase();
 
             const resultClass =
                 String(result.class || "")
-                    .toLowerCase();
-
-            const name =
-                String(result.name || "")
                     .trim()
                     .toLowerCase();
 
+            const name =
+                normalizePlaceName(result.name || "");
+
             const address =
                 result.address || {};
+
+            const addressCity =
+                normalizePlaceName(
+                    address.city ||
+                    address.town ||
+                    address.village ||
+                    address.municipality ||
+                    address.hamlet ||
+                    ""
+                );
 
             const state =
                 String(address.state || "")
@@ -510,16 +535,26 @@ function selectSettlementResult(results, requestedName) {
                     .toLowerCase();
 
             const countryCode =
-                String(
-                    address.country_code ||
-                    result.address?.country_code ||
-                    ""
-                )
+                String(address.country_code || "")
                     .trim()
                     .toLowerCase();
 
+            const iowa =
+                state === "iowa" ||
+                String(address["ISO3166-2-lvl4"] || "")
+                    .toUpperCase() === "US-IA";
 
-            const validSettlementType = [
+            const us =
+                countryCode === "us" ||
+                /united states/i.test(
+                    String(address.country || "")
+                );
+
+            const exactName =
+                name === requestedName ||
+                addressCity === requestedName;
+
+            const settlementType = [
                 "city",
                 "town",
                 "village",
@@ -528,35 +563,67 @@ function selectSettlementResult(results, requestedName) {
                 "locality"
             ].includes(type);
 
+            const settlementAddressType = [
+                "city",
+                "town",
+                "village",
+                "municipality",
+                "hamlet",
+                "locality"
+            ].includes(addresstype);
 
-            const validSettlementClass =
-                resultClass === "place" ||
-                resultClass === "boundary" && validSettlementType;
+            const placeClass =
+                resultClass === "place";
 
-
-            const iowa =
-                state === "iowa" ||
-                address["ISO3166-2-lvl4"] === "US-IA";
-
-
-            const us =
-                countryCode === "us" ||
-                /united states/i.test(address.country || "");
-
+            const validSettlement =
+                settlementType ||
+                settlementAddressType ||
+                (placeClass && exactName);
 
             return (
-                validSettlementType &&
-                validSettlementClass &&
+                exactName &&
+                validSettlement &&
                 iowa &&
-                us &&
-                name === requestedName
+                us
             );
         });
+
+
+    /* Prefer an actual place feature over an address fallback. */
+    settlements.sort((a, b) => {
+        const score = result => {
+            const type = String(result.type || "").toLowerCase();
+            const addresstype = String(result.addresstype || "").toLowerCase();
+            let value = 0;
+
+            if (["city", "town", "village"].includes(type)) value += 100;
+            if (["city", "town", "village"].includes(addresstype)) value += 50;
+            if (String(result.class || "").toLowerCase() === "place") value += 25;
+
+            return value + Number(result.importance || 0);
+        };
+
+        return score(b) - score(a);
+    });
 
 
     return settlements[0] || null;
 }
 
+
+/**
+ * Normalize a place name for exact comparison.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function normalizePlaceName(value) {
+    return String(value)
+        .normalize("NFKC")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
+}
 
 
 /* ============================================================
@@ -1190,6 +1257,7 @@ async function saveStudyToWorker(study) {
             `${API_BASE_URL}${STUDY_CREATE_ENDPOINT}`,
             {
                 method: "POST",
+                cache: "no-store",
 
                 headers: {
                     "Content-Type": "application/json",
