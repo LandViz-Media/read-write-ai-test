@@ -2,7 +2,7 @@
  * Read / Write AI Test
  *
  * Responsibility:
- *   Controls the browser-side Study Setup workflow for Test 3B.4:
+ *   Controls the browser-side Study Setup workflow for Test 3B.3.5:
  *   - validate user input
  *   - resolve U.S. cities/places using Census TIGERweb
  *   - create the buffered study-area extent
@@ -25,7 +25,7 @@
    CONFIGURATION
    ============================================================ */
 
-const APP_VERSION = "3B.4";
+const APP_VERSION = "3B.3.5";
 
 const API_BASE_URL = "https://read-write-ai-test-api.cjseeger.workers.dev";
 const STUDY_CREATE_ENDPOINT = "/api/v1/studies";
@@ -62,19 +62,6 @@ const CENSUS_QUERY_FIELDS = [
 
 const CENSUS_REQUEST_TIMEOUT_MS = 15000;
 const WORKER_REQUEST_TIMEOUT_MS = 20000;
-
-
-/*
- * Overpass is a public, read-only OSM data service. Collection is intentionally
- * browser-side so this deterministic public-data request does not consume the
- * Cloudflare Worker/GitHub authentication path.
- */
-const OVERPASS_ENDPOINTS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter"
-];
-
-const OVERPASS_REQUEST_TIMEOUT_MS = 90000;
 
 const MILES_TO_METERS = 1609.344;
 const METERS_PER_DEGREE_LATITUDE = 111132.92;
@@ -165,29 +152,7 @@ const dom = {
     studyIdDisplay: document.getElementById("studyIdDisplay"),
     studyStatusDisplay: document.getElementById("studyStatusDisplay"),
     repositoryDisplay: document.getElementById("repositoryDisplay"),
-    results: document.getElementById("results"),
-
-    osmCollectionCard: document.getElementById("osmCollectionCard"),
-    osmCollectionStatus: document.getElementById("osmCollectionStatus"),
-    osmStudyId: document.getElementById("osmStudyId"),
-    osmCollectionArea: document.getElementById("osmCollectionArea"),
-    osmAreaMethod: document.getElementById("osmAreaMethod"),
-    collectOsmButton: document.getElementById("collectOsmButton"),
-    osmCounts: document.getElementById("osmCounts"),
-    osmSchoolCount: document.getElementById("osmSchoolCount"),
-    osmBuildingCount: document.getElementById("osmBuildingCount"),
-    osmRenderedBuildingCount: document.getElementById("osmRenderedBuildingCount"),
-    osmLayerControls: document.getElementById("osmLayerControls"),
-    showOsmBuildings: document.getElementById("showOsmBuildings"),
-    showOsmSchools: document.getElementById("showOsmSchools"),
-    osmCollectionDetails: document.getElementById("osmCollectionDetails"),
-    osmEndpoint: document.getElementById("osmEndpoint"),
-    osmTimestamp: document.getElementById("osmTimestamp"),
-    osmRetrievedAt: document.getElementById("osmRetrievedAt"),
-    osmSchoolTable: document.getElementById("osmSchoolTable"),
-    osmDownloads: document.getElementById("osmDownloads"),
-    downloadSchoolsButton: document.getElementById("downloadSchoolsButton"),
-    downloadBuildingsButton: document.getElementById("downloadBuildingsButton")
+    results: document.getElementById("results")
 };
 
 /* ============================================================
@@ -200,10 +165,7 @@ const state = {
     studyAreaLayer: null,
     currentStudy: null,
     studySaved: false,
-    censusStateCache: new Map(),
-    osmCollection: null,
-    osmBuildingsLayer: null,
-    osmSchoolsLayer: null
+    censusStateCache: new Map()
 };
 
 /* ============================================================
@@ -939,7 +901,6 @@ async function createStudyArea() {
 
     state.currentStudy = null;
     state.studySaved = false;
-    resetOsmCollection();
     clearCityMarkers();
     clearStudyAreaLayer();
     dom.locationDetails.hidden = true;
@@ -1141,511 +1102,6 @@ async function saveStudy() {
 }
 
 /* ============================================================
-   OVERPASS / OSM DATA COLLECTION
-   ============================================================ */
-
-function buildOverpassQueries(extent) {
-    const bbox = [
-        extent.minLatitude,
-        extent.minLongitude,
-        extent.maxLatitude,
-        extent.maxLongitude
-    ].map(value => Number(value).toFixed(7)).join(",");
-
-    return {
-        bbox,
-        schools: `[out:json][timeout:60];nwr["amenity"="school"](${bbox});out center;`,
-        buildings: `[out:json][timeout:90];way["building"](${bbox});out geom;`
-    };
-}
-
-async function fetchOverpass(query, endpoint) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(
-        () => controller.abort(),
-        OVERPASS_REQUEST_TIMEOUT_MS
-    );
-
-    try {
-        const response = await fetch(endpoint, {
-            method: "POST",
-            cache: "no-store",
-            signal: controller.signal,
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                Accept: "application/json"
-            },
-            body: `data=${encodeURIComponent(query)}`
-        });
-
-        const text = await response.text();
-        let data;
-
-        try {
-            data = JSON.parse(text);
-        } catch {
-            throw new Error(
-                `Overpass returned a non-JSON response (HTTP ${response.status}).`
-            );
-        }
-
-        if (!response.ok) {
-            const detail =
-                data?.remark ||
-                data?.error ||
-                `HTTP ${response.status}`;
-            throw new Error(detail);
-        }
-
-        if (!Array.isArray(data?.elements)) {
-            throw new Error("Overpass returned no element collection.");
-        }
-
-        return data;
-    } catch (error) {
-        if (error.name === "AbortError") {
-            throw new Error(
-                `The Overpass request timed out after ${OVERPASS_REQUEST_TIMEOUT_MS / 1000} seconds.`
-            );
-        }
-        throw error;
-    } finally {
-        clearTimeout(timeoutId);
-    }
-}
-
-async function fetchOverpassWithFallback(query) {
-    const errors = [];
-
-    for (const endpoint of OVERPASS_ENDPOINTS) {
-        try {
-            const data = await fetchOverpass(query, endpoint);
-            return { data, endpoint };
-        } catch (error) {
-            errors.push(`${endpoint}: ${error.message}`);
-        }
-    }
-
-    throw new Error(
-        "All configured Overpass endpoints failed. " + errors.join(" ")
-    );
-}
-
-function osmElementKey(element) {
-    return `${element.type}/${element.id}`;
-}
-
-function osmElementLabel(element) {
-    const tags = element?.tags || {};
-    return (
-        tags.name ||
-        tags["official_name"] ||
-        tags.operator ||
-        `${String(element.type).toUpperCase()} ${element.id}`
-    );
-}
-
-function osmSchoolElementToFeature(element) {
-    const tags = { ...(element.tags || {}) };
-
-    if (element.type === "node" && Number.isFinite(Number(element.lat)) && Number.isFinite(Number(element.lon))) {
-        return {
-            type: "Feature",
-            properties: {
-                ...tags,
-                osmType: element.type,
-                osmId: element.id,
-                osmUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`
-            },
-            geometry: {
-                type: "Point",
-                coordinates: [Number(element.lon), Number(element.lat)]
-            }
-        };
-    }
-
-    if (element.center &&
-        Number.isFinite(Number(element.center.lat)) &&
-        Number.isFinite(Number(element.center.lon))) {
-        return {
-            type: "Feature",
-            properties: {
-                ...tags,
-                osmType: element.type,
-                osmId: element.id,
-                osmUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`
-            },
-            geometry: {
-                type: "Point",
-                coordinates: [Number(element.center.lon), Number(element.center.lat)]
-            }
-        };
-    }
-
-    return null;
-}
-
-function coordinatesEqual(a, b) {
-    return Boolean(
-        a && b &&
-        Math.abs(a[0] - b[0]) < 1e-12 &&
-        Math.abs(a[1] - b[1]) < 1e-12
-    );
-}
-
-function osmBuildingElementToFeature(element) {
-    const geometry = Array.isArray(element.geometry)
-        ? element.geometry
-            .filter(point => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
-            .map(point => [Number(point.lon), Number(point.lat)])
-        : [];
-
-    if (geometry.length < 2) {
-        return null;
-    }
-
-    const tags = { ...(element.tags || {}) };
-    const isClosed = geometry.length >= 4 && coordinatesEqual(geometry[0], geometry[geometry.length - 1]);
-
-    return {
-        type: "Feature",
-        properties: {
-            ...tags,
-            osmType: element.type,
-            osmId: element.id,
-            osmUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`
-        },
-        geometry: isClosed
-            ? { type: "Polygon", coordinates: [geometry] }
-            : { type: "LineString", coordinates: geometry }
-    };
-}
-
-function buildOsmGeoJSON(rawSchools, rawBuildings) {
-    const schools = rawSchools
-        .map(osmSchoolElementToFeature)
-        .filter(Boolean);
-
-    const buildings = rawBuildings
-        .map(osmBuildingElementToFeature)
-        .filter(Boolean);
-
-    return {
-        schools: {
-            type: "FeatureCollection",
-            name: "osm-schools",
-            features: schools
-        },
-        buildings: {
-            type: "FeatureCollection",
-            name: "osm-buildings",
-            features: buildings
-        }
-    };
-}
-
-function clearOsmLayers() {
-    if (state.osmBuildingsLayer) {
-        state.map.removeLayer(state.osmBuildingsLayer);
-        state.osmBuildingsLayer = null;
-    }
-
-    if (state.osmSchoolsLayer) {
-        state.map.removeLayer(state.osmSchoolsLayer);
-        state.osmSchoolsLayer = null;
-    }
-}
-
-function schoolPopupHtml(feature) {
-    const p = feature.properties || {};
-    const label = escapeHtml(
-        p.name || p.official_name || p.operator || `OSM ${p.osmType}/${p.osmId}`
-    );
-    const type = escapeHtml(`${p.osmType || ""}/${p.osmId || ""}`);
-    const address = [p["addr:street"], p["addr:city"], p["addr:state"]]
-        .filter(Boolean)
-        .map(escapeHtml)
-        .join(", ");
-    const addressHtml = address ? `<br>${address}` : "";
-
-    return `<strong>${label}</strong><br>${type}${addressHtml}<br>` +
-        `<a href="${escapeHtml(p.osmUrl || "#")}" target="_blank" rel="noopener">Open in OpenStreetMap</a>`;
-}
-
-function renderOsmLayers(geojson) {
-    clearOsmLayers();
-
-    state.osmBuildingsLayer = L.geoJSON(geojson.buildings, {
-        style: {
-            weight: 1,
-            fillOpacity: 0.08
-        }
-    });
-
-    state.osmSchoolsLayer = L.geoJSON(geojson.schools, {
-        pointToLayer: (_feature, latlng) =>
-            L.circleMarker(latlng, {
-                radius: 6,
-                weight: 2,
-                fillOpacity: 0.9
-            }),
-        onEachFeature: (feature, layer) => {
-            layer.bindPopup(schoolPopupHtml(feature));
-        }
-    });
-
-    if (dom.showOsmBuildings.checked) {
-        state.osmBuildingsLayer.addTo(state.map);
-    }
-
-    if (dom.showOsmSchools.checked) {
-        state.osmSchoolsLayer.addTo(state.map);
-    }
-}
-
-function updateOsmLayerVisibility() {
-    if (!state.osmCollection) {
-        return;
-    }
-
-    if (state.osmBuildingsLayer) {
-        if (dom.showOsmBuildings.checked) {
-            state.osmBuildingsLayer.addTo(state.map);
-        } else {
-            state.map.removeLayer(state.osmBuildingsLayer);
-        }
-    }
-
-    if (state.osmSchoolsLayer) {
-        if (dom.showOsmSchools.checked) {
-            state.osmSchoolsLayer.addTo(state.map);
-        } else {
-            state.map.removeLayer(state.osmSchoolsLayer);
-        }
-    }
-}
-
-function buildSchoolTable(geojson) {
-    const features = geojson.schools.features;
-
-    if (!features.length) {
-        dom.osmSchoolTable.innerHTML =
-            `<div class="result waiting"><div class="result-title">No school features found</div>` +
-            `<div class="result-message">Overpass returned no elements tagged amenity=school inside the saved study area.</div></div>`;
-        dom.osmSchoolTable.hidden = false;
-        return;
-    }
-
-    const rows = features.map(feature => {
-        const p = feature.properties || {};
-        const name = p.name || p.official_name || p.operator || "(unnamed)";
-        const address = [p["addr:street"], p["addr:city"], p["addr:state"]]
-            .filter(Boolean)
-            .join(", ");
-
-        return `<tr>` +
-            `<td>${escapeHtml(name)}</td>` +
-            `<td>${escapeHtml(p.osmType || "")}/${escapeHtml(p.osmId || "")}</td>` +
-            `<td>${escapeHtml(address || "—")}</td>` +
-            `<td><a href="${escapeHtml(p.osmUrl || "#")}" target="_blank" rel="noopener">OSM</a></td>` +
-            `</tr>`;
-    }).join("");
-
-    dom.osmSchoolTable.innerHTML =
-        `<table>` +
-        `<thead><tr><th>School</th><th>OSM ID</th><th>Address</th><th>Source</th></tr></thead>` +
-        `<tbody>${rows}</tbody>` +
-        `</table>`;
-    dom.osmSchoolTable.hidden = false;
-}
-
-function updateOsmCollectionUI(collection) {
-    const dimensions = calculateDimensions(collection.studyExtent);
-
-    dom.osmCollectionStatus.textContent =
-        `OSM collection complete. ${collection.schoolsGeoJSON.features.length} school features and ` +
-        `${collection.buildingsGeoJSON.features.length} building footprints were returned.`;
-
-    dom.osmStudyId.textContent = collection.studyId;
-    dom.osmCollectionArea.textContent =
-        `${dimensions.widthMiles.toFixed(1)} × ${dimensions.heightMiles.toFixed(1)} miles`;
-    dom.osmAreaMethod.textContent = collection.areaMethod;
-
-    dom.osmCounts.hidden = false;
-    dom.osmSchoolCount.textContent = collection.schoolsGeoJSON.features.length;
-    dom.osmBuildingCount.textContent = collection.buildingsRawCount;
-    dom.osmRenderedBuildingCount.textContent = collection.buildingsGeoJSON.features.length;
-
-    dom.osmLayerControls.hidden = false;
-    dom.osmCollectionDetails.hidden = false;
-    dom.osmEndpoint.textContent = collection.endpoint;
-    dom.osmTimestamp.textContent = collection.osmTimestamp || "Not supplied by Overpass";
-    dom.osmRetrievedAt.textContent = new Date(collection.retrievedAt).toLocaleString();
-    dom.osmDownloads.hidden = false;
-
-    buildSchoolTable(collection.schoolsGeoJSON);
-}
-
-async function collectOsmData() {
-    if (!state.studySaved || !state.currentStudy) {
-        showResult(
-            "Study Not Ready",
-            "Save the study before collecting OpenStreetMap data.",
-            "fail"
-        );
-        return;
-    }
-
-    const extent = state.currentStudy.studyArea.extent;
-    const queries = buildOverpassQueries(extent);
-
-    dom.collectOsmButton.disabled = true;
-    dom.osmCollectionStatus.textContent =
-        "Querying OpenStreetMap school features through Overpass...";
-
-    const result = showResult(
-        "Collecting OSM Data",
-        "Querying Overpass for school features...",
-        "running"
-    );
-
-    try {
-        const schoolsResponse = await fetchOverpassWithFallback(queries.schools);
-
-        result.querySelector(".result-message").textContent =
-            "School features retrieved. Querying building footprints...";
-
-        const buildingsResponse = await fetchOverpassWithFallback(queries.buildings);
-        const geojson = buildOsmGeoJSON(
-            schoolsResponse.data.elements,
-            buildingsResponse.data.elements
-        );
-
-        const collection = {
-            studyId: state.currentStudy.id,
-            areaMethod: state.currentStudy.studyArea.method,
-            studyExtent: extent,
-            bbox: queries.bbox,
-            endpoint: buildingsResponse.endpoint,
-            retrievedAt: new Date().toISOString(),
-            osmTimestamp:
-                buildingsResponse.data.osm3s?.timestamp_osm_base ||
-                schoolsResponse.data.osm3s?.timestamp_osm_base ||
-                "",
-            schoolsRawCount: schoolsResponse.data.elements.length,
-            buildingsRawCount: buildingsResponse.data.elements.length,
-            schoolsGeoJSON: geojson.schools,
-            buildingsGeoJSON: geojson.buildings,
-            queries
-        };
-
-        state.osmCollection = collection;
-        renderOsmLayers(geojson);
-        updateOsmCollectionUI(collection);
-
-        result.className = "result pass";
-        result.querySelector(".result-title").textContent = "✓ OSM Data Collected";
-        result.querySelector(".result-message").textContent =
-            `Returned ${collection.schoolsRawCount} school features and ` +
-            `${collection.buildingsRawCount} building footprints from the saved study area.`;
-
-        result.appendChild(createDataPre({
-            studyId: collection.studyId,
-            bbox: collection.bbox,
-            schoolFeatures: collection.schoolsRawCount,
-            buildingFeatures: collection.buildingsRawCount,
-            overpassEndpoint: collection.endpoint,
-            osmTimestamp: collection.osmTimestamp
-        }));
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        dom.osmCollectionStatus.textContent =
-            `Unable to collect OSM data: ${message}`;
-
-        result.className = "result fail";
-        result.querySelector(".result-title").textContent = "OSM Collection Failed";
-        result.querySelector(".result-message").textContent = message;
-
-        result.appendChild(createDataPre({
-            stage: "overpass-collection",
-            studyId: state.currentStudy.id,
-            bbox: queries.bbox,
-            endpointsTried: OVERPASS_ENDPOINTS
-        }));
-    } finally {
-        dom.collectOsmButton.disabled = false;
-    }
-}
-
-function revealOsmCollection() {
-    if (!state.studySaved || !state.currentStudy) {
-        return;
-    }
-
-    dom.osmCollectionCard.hidden = false;
-    dom.osmStudyId.textContent = state.currentStudy.id;
-    dom.osmAreaMethod.textContent = state.currentStudy.studyArea.method;
-
-    const dimensions = calculateDimensions(state.currentStudy.studyArea.extent);
-    dom.osmCollectionArea.textContent =
-        `${dimensions.widthMiles.toFixed(1)} × ${dimensions.heightMiles.toFixed(1)} miles`;
-
-    dom.osmCollectionStatus.textContent =
-        "The saved study area is ready for OpenStreetMap collection.";
-
-    dom.osmCollectionCard.scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-    });
-}
-
-function downloadGeoJSON(geojson, filename) {
-    const blob = new Blob(
-        [JSON.stringify(geojson, null, 2)],
-        { type: "application/geo+json" }
-    );
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function downloadOsmSchools() {
-    if (!state.osmCollection) return;
-    downloadGeoJSON(
-        state.osmCollection.schoolsGeoJSON,
-        `${state.osmCollection.studyId}-osm-schools.geojson`
-    );
-}
-
-function downloadOsmBuildings() {
-    if (!state.osmCollection) return;
-    downloadGeoJSON(
-        state.osmCollection.buildingsGeoJSON,
-        `${state.osmCollection.studyId}-osm-buildings.geojson`
-    );
-}
-
-function resetOsmCollection() {
-    state.osmCollection = null;
-    clearOsmLayers();
-    dom.osmCollectionCard.hidden = true;
-    dom.osmCounts.hidden = true;
-    dom.osmLayerControls.hidden = true;
-    dom.osmCollectionDetails.hidden = true;
-    dom.osmSchoolTable.hidden = true;
-    dom.osmDownloads.hidden = true;
-    dom.collectOsmButton.disabled = false;
-    dom.showOsmBuildings.checked = true;
-    dom.showOsmSchools.checked = true;
-}
-
-/* ============================================================
    CONTINUE
    ============================================================ */
 
@@ -1654,12 +1110,10 @@ function continueToOsmCollection() {
         return;
     }
 
-    revealOsmCollection();
-
     showResult(
         "Ready for OSM Data Collection",
-        `Study ${state.currentStudy.id} is saved. The next step collects ` +
-        "OpenStreetMap school features and building footprints from the saved study area.",
+        `Study ${state.currentStudy.id} is saved and ready for the next milestone. ` +
+        "OSM/Overpass collection will be implemented next.",
         "pass",
         {
             studyId: state.currentStudy.id,
@@ -1702,11 +1156,6 @@ function invalidateCurrentStudy() {
 dom.createStudyAreaButton.addEventListener("click", createStudyArea);
 dom.saveStudyButton.addEventListener("click", saveStudy);
 dom.continueButton.addEventListener("click", continueToOsmCollection);
-dom.collectOsmButton.addEventListener("click", collectOsmData);
-dom.showOsmBuildings.addEventListener("change", updateOsmLayerVisibility);
-dom.showOsmSchools.addEventListener("change", updateOsmLayerVisibility);
-dom.downloadSchoolsButton.addEventListener("click", downloadOsmSchools);
-dom.downloadBuildingsButton.addEventListener("click", downloadOsmBuildings);
 
 /* ============================================================
    INITIALIZATION
