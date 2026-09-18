@@ -2,7 +2,7 @@
  * Read / Write AI Test
  *
  * Responsibility:
- *   Provides the visual presentation for Test 3B.3.3.4,
+ *   Provides the visual presentation for Test 3B.4,
  *   including study review, persistence status, and the map.
  */
 
@@ -392,5 +392,135 @@ footer {
 
     .study-actions .test-button {
         width: 100%;
+    }
+}
+
+
+/* ============================================================
+   OSM DATA COLLECTION
+   ============================================================ */
+
+.collection-study-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.collection-actions {
+    margin-bottom: 18px;
+}
+
+.osm-counts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 18px 0;
+}
+
+.osm-count {
+    padding: 16px;
+    border: 1px solid #d9dde2;
+    border-radius: 8px;
+    background: #f8f9fa;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.osm-count strong {
+    font-size: 1.6rem;
+}
+
+.osm-count span {
+    color: #666;
+    font-size: 0.88rem;
+}
+
+.osm-layer-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin: 16px 0;
+    padding: 12px;
+    border: 1px solid #d9dde2;
+    border-radius: 8px;
+    background: #f8f9fa;
+}
+
+.layer-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.92rem;
+    color: #333;
+}
+
+.osm-details {
+    border-top: 1px solid #e1e4e8;
+    border-bottom: 1px solid #e1e4e8;
+    padding: 10px 0;
+    margin: 16px 0;
+}
+
+.osm-detail-row {
+    display: grid;
+    grid-template-columns: 190px 1fr;
+    gap: 12px;
+    padding: 5px 0;
+    font-size: 0.9rem;
+}
+
+.osm-detail-row strong {
+    color: #666;
+}
+
+.osm-school-table {
+    overflow-x: auto;
+    margin-top: 18px;
+}
+
+.osm-school-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.osm-school-table th,
+.osm-school-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid #e1e4e8;
+    text-align: left;
+    vertical-align: top;
+}
+
+.osm-school-table th {
+    background: #f1f3f5;
+    font-weight: 600;
+}
+
+.osm-school-table a {
+    color: #075985;
+}
+
+.future-note {
+    margin-top: 18px;
+    padding: 12px 14px;
+    border-left: 4px solid #f59e0b;
+    background: #fffaf0;
+    color: #555;
+    line-height: 1.45;
+    font-size: 0.9rem;
+}
+
+@media (max-width: 720px) {
+    .collection-study-summary,
+    .osm-counts {
+        grid-template-columns: 1fr;
+    }
+
+    .osm-detail-row {
+        grid-template-columns: 1fr;
+        gap: 2px;
     }
 }
