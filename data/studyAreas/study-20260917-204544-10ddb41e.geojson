@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "name": "study-20260917-204544-10ddb41e",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "studyId": "study-20260917-204544-10ddb41e",
+        "studyName": "Ogden–Madrid OSM test",
+        "application": "osm-scout",
+        "method": "city-extent-buffer",
+        "bufferDistance": 5,
+        "bufferUnits": "miles"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -94.12565556819956,
+              41.803281931902305
+            ],
+            [
+              -93.72315883180045,
+              41.803281931902305
+            ],
+            [
+              -93.72315883180045,
+              42.1118851680977
+            ],
+            [
+              -94.12565556819956,
+              42.1118851680977
+            ],
+            [
+              -94.12565556819956,
+              41.803281931902305
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

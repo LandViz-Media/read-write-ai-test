@@ -61,5 +61,68 @@
       "geocodedAt": "2026-09-18T01:33:40.826Z",
       "mapReviewedBeforeSave": true
     }
+  },
+  {
+    "id": "study-20260917-204544-10ddb41e",
+    "name": "Ogden–Madrid OSM test",
+    "application": "osm-scout",
+    "created": "2026-09-18T01:45:44.334Z",
+    "updated": "2026-09-18T01:45:50.244Z",
+    "status": "study-area-created",
+    "cities": [
+      {
+        "input": "Ogden, IA",
+        "name": "Ogden",
+        "state": "Iowa",
+        "stateAbbr": "IA",
+        "country": "United States",
+        "latitude": 42.0394789,
+        "longitude": -94.0282882,
+        "displayName": "Ogden city",
+        "geocoder": "U.S. Census Bureau TIGERweb",
+        "censusVintage": "2026",
+        "censusLayer": "Incorporated Place",
+        "censusLayerId": 4,
+        "censusGEOID": "1958665",
+        "censusPlaceCode": "58665",
+        "censusPlaceClassCode": "C1"
+      },
+      {
+        "input": "Madrid, IA",
+        "name": "Madrid",
+        "state": "Iowa",
+        "stateAbbr": "IA",
+        "country": "United States",
+        "latitude": 41.8756882,
+        "longitude": -93.8205262,
+        "displayName": "Madrid city",
+        "geocoder": "U.S. Census Bureau TIGERweb",
+        "censusVintage": "2026",
+        "censusLayer": "Incorporated Place",
+        "censusLayerId": 4,
+        "censusGEOID": "1948450",
+        "censusPlaceCode": "48450",
+        "censusPlaceClassCode": "C1"
+      }
+    ],
+    "buffer": {
+      "distance": 5,
+      "units": "miles"
+    },
+    "studyArea": {
+      "method": "city-extent-buffer",
+      "extent": {
+        "minLatitude": 41.803281931902305,
+        "maxLatitude": 42.1118851680977,
+        "minLongitude": -94.12565556819956,
+        "maxLongitude": -93.72315883180045
+      }
+    },
+    "provenance": {
+      "geocoder": "U.S. Census Bureau TIGERweb",
+      "censusVintage": "2026",
+      "geocodedAt": "2026-09-18T01:45:44.334Z",
+      "mapReviewedBeforeSave": true
+    }
   }
 ]
