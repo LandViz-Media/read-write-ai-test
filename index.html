@@ -18,7 +18,7 @@
         crossorigin=""
     >
 
-    <link rel="stylesheet" href="style.css?v=3B.3.5">
+    <link rel="stylesheet" href="style.css?v=3B.4">
 </head>
 
 <body>
@@ -28,7 +28,7 @@
     <header class="page-header">
         <h1>Read / Write AI Test</h1>
         <p class="subtitle">
-            Test 3B.3.5 — Census Place Resolution + GitHub App
+            Test 3B.4 — OSM Data Collection
         </p>
     </header>
 
@@ -192,7 +192,7 @@
         <p class="section-description">
             Review the map and resolved locations above, then save the study
             to create a persistent study record and GeoJSON study area
-            in the private GitHub repository.
+            in the GitHub repository.
         </p>
 
         <div id="saveSummary" class="save-summary" hidden>
@@ -208,7 +208,7 @@
 
             <div class="save-summary-item">
                 <strong>Repository</strong>
-                <span id="repositoryDisplay">Private GitHub repository</span>
+                <span id="repositoryDisplay">LandViz-Media/read-write-ai-test (public)</span>
             </div>
         </div>
 
@@ -236,6 +236,114 @@
 
 
     <!-- ==================================================
+         OSM DATA COLLECTION
+         ================================================== -->
+
+    <section id="osmCollectionCard" class="card" hidden>
+
+        <div class="map-header">
+            <div>
+                <h2>OSM Data Collection</h2>
+
+                <p id="osmCollectionStatus" class="map-status">
+                    The saved study is ready for OpenStreetMap collection.
+                </p>
+            </div>
+        </div>
+
+        <p class="section-description">
+            Collect the raw OpenStreetMap school features and building footprints
+            inside the saved study-area extent. This step reads OSM through the
+            Overpass API directly from the browser; it does not modify OpenStreetMap.
+        </p>
+
+        <div class="collection-study-summary">
+            <div class="save-summary-item">
+                <strong>Study ID</strong>
+                <span id="osmStudyId">—</span>
+            </div>
+            <div class="save-summary-item">
+                <strong>Collection Area</strong>
+                <span id="osmCollectionArea">—</span>
+            </div>
+            <div class="save-summary-item">
+                <strong>AOI Method</strong>
+                <span id="osmAreaMethod">City extent + buffer</span>
+            </div>
+        </div>
+
+        <div class="study-actions collection-actions">
+            <button
+                id="collectOsmButton"
+                class="test-button primary"
+                type="button"
+            >
+                Collect OSM Data
+            </button>
+        </div>
+
+        <div id="osmCounts" class="osm-counts" hidden>
+            <div class="osm-count">
+                <strong id="osmSchoolCount">0</strong>
+                <span>School features</span>
+            </div>
+            <div class="osm-count">
+                <strong id="osmBuildingCount">0</strong>
+                <span>Building footprints</span>
+            </div>
+            <div class="osm-count">
+                <strong id="osmRenderedBuildingCount">0</strong>
+                <span>Rendered footprints</span>
+            </div>
+        </div>
+
+        <div id="osmLayerControls" class="osm-layer-controls" hidden>
+            <label class="layer-check">
+                <input id="showOsmBuildings" type="checkbox" checked>
+                <span>Show building footprints</span>
+            </label>
+            <label class="layer-check">
+                <input id="showOsmSchools" type="checkbox" checked>
+                <span>Show school features</span>
+            </label>
+        </div>
+
+        <div id="osmCollectionDetails" class="osm-details" hidden>
+            <div class="osm-detail-row">
+                <strong>Overpass endpoint</strong>
+                <span id="osmEndpoint">—</span>
+            </div>
+            <div class="osm-detail-row">
+                <strong>OSM data timestamp</strong>
+                <span id="osmTimestamp">—</span>
+            </div>
+            <div class="osm-detail-row">
+                <strong>Retrieved</strong>
+                <span id="osmRetrievedAt">—</span>
+            </div>
+        </div>
+
+        <div id="osmSchoolTable" class="osm-school-table" hidden></div>
+
+        <div id="osmDownloads" class="study-actions" hidden>
+            <button id="downloadSchoolsButton" class="test-button" type="button">
+                Download School GeoJSON
+            </button>
+            <button id="downloadBuildingsButton" class="test-button" type="button">
+                Download Building GeoJSON
+            </button>
+        </div>
+
+        <div class="future-note">
+            <strong>Future AOI option:</strong>
+            this milestone uses the saved city-extent study area. A later version
+            will allow the user to draw a custom area of interest directly on the map.
+        </div>
+
+    </section>
+
+
+    <!-- ==================================================
          TEST RESULTS
          ================================================== -->
 
@@ -250,7 +358,7 @@
                 </div>
 
                 <div class="result-message">
-                    Test 3B.3.5 uses Census place data for U.S. city resolution and persists the study through the Cloudflare Worker and GitHub App.
+                    Test 3B.4 collects OpenStreetMap school features and building footprints through Overpass after the study is saved through the Cloudflare Worker and GitHub App.
                 </div>
             </div>
         </div>
@@ -279,6 +387,7 @@
 
             <li>
                 City/place resolution is performed client-side using U.S. Census TIGERweb.
+                OSM collection is also performed client-side using Overpass.
                 No GitHub credential is exposed to the browser.
             </li>
 
@@ -292,7 +401,7 @@
 
 
     <footer>
-        <p>Test 3B.3.5 — LandViz Media</p>
+        <p>Test 3B.4 — LandViz Media</p>
     </footer>
 
 </main>
@@ -305,7 +414,7 @@
     crossorigin=""
 ></script>
 
-<script src="app.js?v=3B.3.5"></script>
+<script src="app.js?v=3B.4"></script>
 
 </body>
 </html>
