@@ -1,0 +1,15 @@
+name = "read-write-ai-test-api"
+main = "worker.js"
+compatibility_date = "2026-09-17"
+
+# The GitHub App private key must remain a Cloudflare secret.
+# Existing deployments should retain the secret named:
+#   GITHUB_APP_PRIVATE_KEY
+#
+# Optional variables can override the defaults in worker.js:
+# GITHUB_APP_ID
+# GITHUB_APP_INSTALLATION_ID
+# GITHUB_OWNER
+# GITHUB_REPO
+# GITHUB_BRANCH
+# ALLOWED_ORIGIN
