@@ -2,7 +2,7 @@
  * Read / Write AI Test
  *
  * Responsibility:
- *   Provides the visual presentation for Test 3B.4,
+ *   Provides the visual presentation for Test 3B.5,
  *   including study review, persistence status, and the map.
  */
 
@@ -647,5 +647,76 @@ footer {
     .osm-detail-row {
         grid-template-columns: 1fr;
         gap: 4px;
+    }
+}
+
+
+/* ============================================================
+   SCHOOL BUILDING + EDUCATION DATA
+   ============================================================ */
+
+.school-education-table {
+    margin-top: 18px;
+}
+
+.school-education-table h3 {
+    margin: 0 0 10px;
+    font-size: 1.05rem;
+}
+
+.school-education-table .table-note {
+    margin: 0 0 12px;
+    color: #666;
+    font-size: 0.87rem;
+    line-height: 1.4;
+}
+
+.osm-school-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.osm-school-table th,
+.osm-school-table td {
+    padding: 9px 8px;
+    border-bottom: 1px solid #d9dde2;
+    text-align: left;
+    vertical-align: top;
+}
+
+.osm-school-table th {
+    background: #f1f3f5;
+    font-weight: 700;
+}
+
+.osm-school-table tr:last-child td {
+    border-bottom: 0;
+}
+
+.match-good {
+    font-weight: 600;
+}
+
+.match-review {
+    font-weight: 600;
+}
+
+.match-none {
+    color: #777;
+}
+
+.grade-values {
+    max-width: 360px;
+    line-height: 1.45;
+}
+
+@media (max-width: 800px) {
+    .osm-school-table {
+        overflow-x: auto;
+    }
+
+    .osm-school-table table {
+        min-width: 760px;
     }
 }

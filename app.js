@@ -2,7 +2,7 @@
  * Read / Write AI Test
  *
  * Responsibility:
- *   Controls the browser-side Study Setup workflow for Test 3B.4:
+ *   Controls the browser-side Study Setup workflow for Test 3B.5:
  *   - validate user input
  *   - resolve U.S. cities/places using Census TIGERweb
  *   - create the buffered study-area extent
@@ -25,7 +25,7 @@
    CONFIGURATION
    ============================================================ */
 
-const APP_VERSION = "3B.4";
+const APP_VERSION = "3B.5";
 
 const API_BASE_URL = "https://read-write-ai-test-api.cjseeger.workers.dev";
 const STUDY_CREATE_ENDPOINT = "/api/v1/studies";
@@ -187,7 +187,25 @@ const dom = {
     osmSchoolTable: document.getElementById("osmSchoolTable"),
     osmDownloads: document.getElementById("osmDownloads"),
     downloadSchoolsButton: document.getElementById("downloadSchoolsButton"),
-    downloadBuildingsButton: document.getElementById("downloadBuildingsButton")
+    downloadBuildingsButton: document.getElementById("downloadBuildingsButton"),
+
+    schoolEducationCard: document.getElementById("schoolEducationCard"),
+    schoolEducationStatus: document.getElementById("schoolEducationStatus"),
+    schoolEducationStudyId: document.getElementById("schoolEducationStudyId"),
+    schoolEducationOsmSchools: document.getElementById("schoolEducationOsmSchools"),
+    schoolEducationOsmBuildings: document.getElementById("schoolEducationOsmBuildings"),
+    runSchoolEducationButton: document.getElementById("runSchoolEducationButton"),
+    schoolEducationCounts: document.getElementById("schoolEducationCounts"),
+    candidateBuildingCount: document.getElementById("candidateBuildingCount"),
+    educationCurrentCount: document.getElementById("educationCurrentCount"),
+    educationComparisonCount: document.getElementById("educationComparisonCount"),
+    schoolEducationLayerControls: document.getElementById("schoolEducationLayerControls"),
+    showSchoolCandidates: document.getElementById("showSchoolCandidates"),
+    educationSourceDetails: document.getElementById("educationSourceDetails"),
+    educationCurrentSource: document.getElementById("educationCurrentSource"),
+    educationComparisonSource: document.getElementById("educationComparisonSource"),
+    candidateBuildingTable: document.getElementById("candidateBuildingTable"),
+    educationMatchTable: document.getElementById("educationMatchTable")
 };
 
 /* ============================================================
@@ -203,7 +221,9 @@ const state = {
     censusStateCache: new Map(),
     osmCollection: null,
     osmBuildingsLayer: null,
-    osmSchoolsLayer: null
+    osmSchoolsLayer: null,
+    schoolCandidateLayer: null,
+    schoolEducation: null
 };
 
 /* ============================================================
@@ -1372,6 +1392,8 @@ function buildOsmGeoJSON(rawSchools, rawBuildings) {
 }
 
 function clearOsmLayers() {
+    clearSchoolCandidateLayer();
+
     if (state.osmBuildingsLayer) {
         state.map.removeLayer(state.osmBuildingsLayer);
         state.osmBuildingsLayer = null;
@@ -1512,6 +1534,7 @@ function updateOsmCollectionUI(collection) {
     dom.osmDownloads.hidden = false;
 
     buildSchoolTable(collection.schoolsGeoJSON);
+    revealSchoolEducationCard();
 }
 
 async function collectOsmData() {
@@ -1662,8 +1685,928 @@ function downloadOsmBuildings() {
     );
 }
 
+/* ============================================================
+   SCHOOL BUILDING + EDUCATION DATA
+   ============================================================ */
+
+const EDUCATION_DATA_SOURCES = {
+    page: "https://educate.iowa.gov/pk-12/data/education-statistics",
+    currentDirectory: "https://educate.iowa.gov/media/11648/download?inline=",
+    currentEnrollment: "https://educate.iowa.gov/media/12228/download?inline=",
+    comparisonEnrollment: "https://educate.iowa.gov/media/7631/download?inline="
+};
+
+const SCHOOL_BUILDING_CANDIDATE_RADIUS_METERS = 150;
+const EDUCATION_REQUEST_TIMEOUT_MS = 30000;
+
+function clearSchoolCandidateLayer() {
+    if (state.schoolCandidateLayer) {
+        state.map.removeLayer(state.schoolCandidateLayer);
+        state.schoolCandidateLayer = null;
+    }
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+    const earthRadius = 6371008.8;
+    const toRadians = value => value * Math.PI / 180;
+    const dLat = toRadians(lat2 - lat1);
+    const dLon = toRadians(lon2 - lon1);
+    const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRadians(lat1)) *
+        Math.cos(toRadians(lat2)) *
+        Math.sin(dLon / 2) ** 2;
+
+    return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function featureRepresentativePoint(feature) {
+    const geometry = feature?.geometry;
+    if (!geometry) return null;
+
+    if (geometry.type === "Point" && Array.isArray(geometry.coordinates)) {
+        return [Number(geometry.coordinates[1]), Number(geometry.coordinates[0])];
+    }
+
+    const positions = [];
+
+    function collectPositions(coords) {
+        if (!Array.isArray(coords)) return;
+        if (coords.length >= 2 && typeof coords[0] === "number" && typeof coords[1] === "number") {
+            positions.push([Number(coords[1]), Number(coords[0])]);
+            return;
+        }
+        coords.forEach(collectPositions);
+    }
+
+    collectPositions(geometry.coordinates);
+
+    if (!positions.length) return null;
+
+    const lat = positions.reduce((sum, point) => sum + point[0], 0) / positions.length;
+    const lon = positions.reduce((sum, point) => sum + point[1], 0) / positions.length;
+    return [lat, lon];
+}
+
+function normalizeSchoolText(value) {
+    return String(value || "")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[’‘]/g, "'")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, " ")
+        .trim()
+        .replace(/\\s+/g, " ");
+}
+
+function schoolTokens(value) {
+    const stopWords = new Set([
+        "THE", "SCHOOL", "SCHOOLS", "DISTRICT", "DIST", "COMMUNITY",
+        "COMM", "PUBLIC", "ACADEMY", "CAMPUS", "CENTER", "CTR"
+    ]);
+    return new Set(
+        normalizeSchoolText(value)
+            .split(" ")
+            .filter(token => token && !stopWords.has(token))
+    );
+}
+
+function tokenJaccard(a, b) {
+    const aSet = schoolTokens(a);
+    const bSet = schoolTokens(b);
+    const union = new Set([...aSet, ...bSet]);
+    if (!union.size) return 0;
+    let intersection = 0;
+    aSet.forEach(token => {
+        if (bSet.has(token)) intersection += 1;
+    });
+    return intersection / union.size;
+}
+
+function levenshteinRatio(a, b) {
+    const left = normalizeSchoolText(a);
+    const right = normalizeSchoolText(b);
+    if (!left && !right) return 1;
+    if (!left || !right) return 0;
+
+    const previous = Array(right.length + 1).fill(0);
+    const current = Array(right.length + 1).fill(0);
+    for (let j = 0; j <= right.length; j += 1) previous[j] = j;
+
+    for (let i = 1; i <= left.length; i += 1) {
+        current[0] = i;
+        for (let j = 1; j <= right.length; j += 1) {
+            const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+            current[j] = Math.min(
+                current[j - 1] + 1,
+                previous[j] + 1,
+                previous[j - 1] + cost
+            );
+        }
+        for (let j = 0; j <= right.length; j += 1) previous[j] = current[j];
+    }
+
+    return 1 - previous[right.length] / Math.max(left.length, right.length);
+}
+
+function schoolMatchScore(osmSchool, doeRecord) {
+    const osmName =
+        osmSchool.properties?.name ||
+        osmSchool.properties?.official_name ||
+        osmSchool.properties?.operator ||
+        "";
+    const osmCity = osmSchool.properties?.["addr:city"] || "";
+
+    const exact = normalizeSchoolText(osmName) === normalizeSchoolText(doeRecord.schoolName);
+    if (exact) return { score: 100, method: "exact-name" };
+
+    const tokenScore = tokenJaccard(osmName, doeRecord.schoolName);
+    const editScore = levenshteinRatio(osmName, doeRecord.schoolName);
+    let score = Math.round(Math.max(tokenScore * 100, editScore * 100));
+    let method = "name-similarity";
+
+    if (osmCity && doeRecord.city && normalizeSchoolText(osmCity) === normalizeSchoolText(doeRecord.city)) {
+        score = Math.min(100, score + 8);
+        method = "name-and-city";
+    }
+
+    return { score, method };
+}
+
+function identifyCandidateSchoolBuildings() {
+    if (!state.osmCollection) {
+        throw new Error("Collect OSM data before identifying candidate school buildings.");
+    }
+
+    const schools = state.osmCollection.schoolsGeoJSON.features;
+    const buildings = state.osmCollection.buildingsGeoJSON.features;
+    const candidatesByBuilding = new Map();
+    const candidatesBySchool = [];
+
+    schools.forEach(school => {
+        const schoolPoint = featureRepresentativePoint(school);
+        if (!schoolPoint) return;
+
+        const schoolCandidates = buildings
+            .map(building => {
+                const buildingPoint = featureRepresentativePoint(building);
+                if (!buildingPoint) return null;
+
+                const distance = haversineMeters(
+                    schoolPoint[0],
+                    schoolPoint[1],
+                    buildingPoint[0],
+                    buildingPoint[1]
+                );
+
+                if (distance > SCHOOL_BUILDING_CANDIDATE_RADIUS_METERS) return null;
+
+                return {
+                    schoolOsmKey: `${school.properties?.osmType}/${school.properties?.osmId}`,
+                    schoolName:
+                        school.properties?.name ||
+                        school.properties?.official_name ||
+                        school.properties?.operator ||
+                        "(unnamed school)",
+                    buildingOsmKey: `${building.properties?.osmType}/${building.properties?.osmId}`,
+                    buildingFeature: building,
+                    distanceMeters: distance,
+                    buildingName: building.properties?.name || "",
+                    buildingType: building.properties?.building || "yes"
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => a.distanceMeters - b.distanceMeters);
+
+        candidatesBySchool.push({
+            school,
+            candidates: schoolCandidates
+        });
+
+        schoolCandidates.forEach(candidate => {
+            if (!candidatesByBuilding.has(candidate.buildingOsmKey)) {
+                candidatesByBuilding.set(candidate.buildingOsmKey, candidate);
+            }
+        });
+    });
+
+    const candidateFeatures = [...candidatesByBuilding.values()].map(candidate => ({
+        ...candidate.buildingFeature,
+        properties: {
+            ...(candidate.buildingFeature.properties || {}),
+            candidateForSchool: candidate.schoolName,
+            candidateDistanceMeters: Number(candidate.distanceMeters.toFixed(1)),
+            candidateRadiusMeters: SCHOOL_BUILDING_CANDIDATE_RADIUS_METERS,
+            candidateRole: "school-building-candidate"
+        }
+    }));
+
+    return {
+        radiusMeters: SCHOOL_BUILDING_CANDIDATE_RADIUS_METERS,
+        candidatesBySchool,
+        candidateBuildings: {
+            type: "FeatureCollection",
+            name: "osm-school-building-candidates",
+            features: candidateFeatures
+        },
+        uniqueCandidateCount: candidateFeatures.length
+    };
+}
+
+function candidateBuildingPopupHtml(feature) {
+    const p = feature.properties || {};
+    const name = escapeHtml(p.name || `OSM ${p.osmType}/${p.osmId}`);
+    const school = escapeHtml(p.candidateForSchool || "School feature");
+    const distance = Number(p.candidateDistanceMeters);
+    const distanceText = Number.isFinite(distance) ? `${distance.toFixed(1)} m` : "—";
+    return `<strong>${name}</strong><br>` +
+        `Candidate for: ${school}<br>` +
+        `Distance from school feature: ${escapeHtml(distanceText)}<br>` +
+        `<a href="${escapeHtml(p.osmUrl || "#")}" target="_blank" rel="noopener">Open in OpenStreetMap</a>`;
+}
+
+function renderSchoolBuildingCandidates(candidateData) {
+    clearSchoolCandidateLayer();
+
+    state.schoolCandidateLayer = L.geoJSON(candidateData.candidateBuildings, {
+        style: {
+            weight: 2,
+            fillOpacity: 0.18,
+            dashArray: "5 4"
+        },
+        onEachFeature: (feature, layer) => {
+            layer.bindPopup(candidateBuildingPopupHtml(feature));
+        }
+    });
+
+    if (dom.showSchoolCandidates.checked) {
+        state.schoolCandidateLayer.addTo(state.map);
+    }
+}
+
+function updateSchoolCandidateVisibility() {
+    if (!state.schoolCandidateLayer) return;
+    if (dom.showSchoolCandidates.checked) {
+        state.schoolCandidateLayer.addTo(state.map);
+    } else {
+        state.map.removeLayer(state.schoolCandidateLayer);
+    }
+}
+
+function buildCandidateBuildingTable(candidateData) {
+    const rows = candidateData.candidatesBySchool.flatMap(entry =>
+        entry.candidates.map(candidate => ({
+            schoolName: entry.school.properties?.name || entry.school.properties?.official_name || "(unnamed school)",
+            schoolOsmId: `${entry.school.properties?.osmType}/${entry.school.properties?.osmId}`,
+            buildingOsmId: candidate.buildingOsmKey,
+            distanceMeters: candidate.distanceMeters,
+            buildingType: candidate.buildingType,
+            buildingName: candidate.buildingName,
+            osmUrl: candidate.buildingFeature.properties?.osmUrl || "#"
+        }))
+    );
+
+    if (!rows.length) {
+        dom.candidateBuildingTable.innerHTML =
+            `<div class="result waiting"><div class="result-title">No nearby candidate buildings</div>` +
+            `<div class="result-message">No OSM building footprints were found within ${SCHOOL_BUILDING_CANDIDATE_RADIUS_METERS} meters of the returned school features.</div></div>`;
+        dom.candidateBuildingTable.hidden = false;
+        return;
+    }
+
+    const body = rows.map(row =>
+        `<tr>` +
+        `<td>${escapeHtml(row.schoolName)}</td>` +
+        `<td>${escapeHtml(row.schoolOsmId)}</td>` +
+        `<td>${escapeHtml(row.buildingOsmId)}</td>` +
+        `<td>${row.distanceMeters.toFixed(1)} m</td>` +
+        `<td>${escapeHtml(row.buildingType)}</td>` +
+        `<td>${escapeHtml(row.buildingName || "—")}</td>` +
+        `<td><a href="${escapeHtml(row.osmUrl)}" target="_blank" rel="noopener">OSM</a></td>` +
+        `</tr>`
+    ).join("");
+
+    dom.candidateBuildingTable.innerHTML =
+        `<div class="school-education-table">` +
+        `<h3>Candidate OSM School Buildings</h3>` +
+        `<p class="table-note">Candidate buildings are deterministic spatial matches within ${SCHOOL_BUILDING_CANDIDATE_RADIUS_METERS} meters of each mapped school feature. They are not yet classified as actual school buildings.</p>` +
+        `<table><thead><tr>` +
+        `<th>OSM School</th><th>School OSM ID</th><th>Building OSM ID</th><th>Distance</th><th>Building Tag</th><th>Building Name</th><th>Source</th>` +
+        `</tr></thead><tbody>${body}</tbody></table></div>`;
+    dom.candidateBuildingTable.hidden = false;
+}
+
+function normalizeHeader(value) {
+    return String(value ?? "")
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, " ")
+        .trim();
+}
+
+function toNumber(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    const text = String(value ?? "").replace(/,/g, "").trim();
+    if (!text) return null;
+    const number = Number(text);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeCode(value) {
+    const text = String(value ?? "").trim();
+    if (!text) return "";
+    const digits = text.replace(/[^0-9]/g, "");
+    return digits || normalizeSchoolText(text);
+}
+
+function findHeaderRow(rows) {
+    const aliases = {
+        school: ["SCHOOL", "SCHOOL NAME"],
+        district: ["DISTRICT", "DISTRICT NAME"],
+        total: ["TOTAL", "TOTAL ENROLLMENT", "PK 12", "K 12", "ENROLLMENT"]
+    };
+
+    let best = { index: -1, score: 0 };
+
+    rows.slice(0, 60).forEach((row, index) => {
+        const headers = row.map(normalizeHeader);
+        let score = 0;
+        if (headers.some(h => aliases.school.includes(h))) score += 3;
+        if (headers.some(h => aliases.district.includes(h))) score += 2;
+        if (headers.some(h => aliases.total.includes(h) || /TOTAL.*ENROLL/.test(h))) score += 2;
+        if (headers.some(h => /^PK$|^KG$|^K$|^GRADE/.test(h))) score += 1;
+        if (score > best.score) best = { index, score };
+    });
+
+    return best.index >= 0 && best.score >= 3 ? best.index : -1;
+}
+
+function mapGradeName(header) {
+    const h = normalizeHeader(header);
+    if (/^(PK|PRE K|PREK|PRE KINDERGARTEN|PRESCHOOL)$/.test(h)) return "PK";
+    if (/^(K|KG|KINDERGARTEN)$/.test(h)) return "K";
+    const match = h.match(/^(?:GRADE|GR|YEAR)?\s*([0-9]{1,2})(?:ST|ND|RD|TH)?$/);
+    if (match) {
+        const number = Number(match[1]);
+        if (number >= 1 && number <= 12) return String(number);
+    }
+    const ordinal = h.match(/^(1ST|2ND|3RD|4TH|5TH|6TH|7TH|8TH|9TH|10TH|11TH|12TH)$/);
+    if (ordinal) return ordinal[1].replace(/ST$|ND$|RD$|TH$/, "");
+    return null;
+}
+
+function findColumn(headers, tests) {
+    for (let i = 0; i < headers.length; i += 1) {
+        const header = normalizeHeader(headers[i]);
+        if (tests.some(test => test(header))) return i;
+    }
+    return -1;
+}
+
+function parseEnrollmentWorkbook(buffer, yearLabel) {
+    if (!window.XLSX) {
+        throw new Error("SheetJS did not load, so the Iowa enrollment workbook cannot be read in the browser.");
+    }
+
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const records = [];
+
+    workbook.SheetNames.forEach(sheetName => {
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+        const headerIndex = findHeaderRow(rows);
+        if (headerIndex < 0) return;
+
+        const headers = rows[headerIndex];
+        const schoolIndex = findColumn(headers, [
+            h => h === "SCHOOL",
+            h => h === "SCHOOL NAME"
+        ]);
+        if (schoolIndex < 0) return;
+
+        const districtCodeIndex = findColumn(headers, [
+            h => h === "DISTRICT",
+            h => h === "DISTRICT CODE",
+            h => h.includes("DISTRICT") && h.includes("CODE")
+        ]);
+        const schoolCodeIndex = findColumn(headers, [
+            h => h === "SCHOOL CODE",
+            h => h === "SCHOOL ID",
+            h => h.includes("SCHOOL") && h.includes("CODE")
+        ]);
+        const districtNameIndex = findColumn(headers, [
+            h => h === "DISTRICT NAME",
+            h => h.includes("DISTRICT") && h.includes("NAME")
+        ]);
+        const totalIndex = findColumn(headers, [
+            h => /^TOTAL$/.test(h),
+            h => /TOTAL.*ENROLL/.test(h),
+            h => /PK 12/.test(h) || /K 12/.test(h)
+        ]);
+
+        const gradeColumns = headers
+            .map((header, index) => ({ grade: mapGradeName(header), index }))
+            .filter(item => item.grade !== null);
+
+        for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+            const row = rows[rowIndex];
+            if (!row || !row.length) continue;
+
+            const schoolName = String(row[schoolIndex] ?? "").trim();
+            if (!schoolName) continue;
+
+            const grades = {};
+            gradeColumns.forEach(({ grade, index }) => {
+                const value = toNumber(row[index]);
+                if (value !== null) grades[grade] = value;
+            });
+
+            let total = totalIndex >= 0 ? toNumber(row[totalIndex]) : null;
+            if (total === null && Object.keys(grades).length) {
+                total = Object.values(grades).reduce((sum, value) => sum + value, 0);
+            }
+
+            records.push({
+                year: yearLabel,
+                sheet: sheetName,
+                districtCode: districtCodeIndex >= 0 ? normalizeCode(row[districtCodeIndex]) : "",
+                schoolCode: schoolCodeIndex >= 0 ? normalizeCode(row[schoolCodeIndex]) : "",
+                districtName: districtNameIndex >= 0 ? String(row[districtNameIndex] ?? "").trim() : "",
+                schoolName,
+                total,
+                grades
+            });
+        }
+    });
+
+    if (!records.length) {
+        throw new Error(`The ${yearLabel} Iowa enrollment workbook was read, but no school building enrollment records could be identified.`);
+    }
+
+    return deduplicateEducationRecords(records);
+}
+
+function deduplicateEducationRecords(records) {
+    const map = new Map();
+    records.forEach(record => {
+        const key = record.districtCode && record.schoolCode
+            ? `${record.districtCode}|${record.schoolCode}`
+            : `${normalizeSchoolText(record.districtName)}|${normalizeSchoolText(record.schoolName)}|${record.year}`;
+        if (!map.has(key)) map.set(key, record);
+    });
+    return [...map.values()];
+}
+
+function parseDirectoryWorkbook(buffer, yearLabel) {
+    if (!window.XLSX) {
+        throw new Error("SheetJS did not load, so the Iowa school building directory cannot be read in the browser.");
+    }
+
+    const workbook = XLSX.read(buffer, { type: "array" });
+    const records = [];
+
+    workbook.SheetNames.forEach(sheetName => {
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+        const headerIndex = findHeaderRow(rows);
+        if (headerIndex < 0) return;
+
+        const headers = rows[headerIndex];
+        const schoolIndex = findColumn(headers, [h => h === "SCHOOL", h => h === "SCHOOL NAME"]);
+        if (schoolIndex < 0) return;
+
+        const districtCodeIndex = findColumn(headers, [
+            h => h === "DISTRICT",
+            h => h === "DISTRICT CODE",
+            h => h.includes("DISTRICT") && h.includes("CODE")
+        ]);
+        const districtNameIndex = findColumn(headers, [h => h === "DISTRICT NAME", h => h.includes("DISTRICT") && h.includes("NAME")]);
+        const schoolCodeIndex = findColumn(headers, [h => h === "SCHOOL CODE", h => h === "SCHOOL ID", h => h.includes("SCHOOL") && h.includes("CODE")]);
+        const streetIndex = findColumn(headers, [h => h === "STREET ADDRESS", h => h.includes("STREET") && h.includes("ADDRESS")]);
+        const cityIndex = findColumn(headers, [h => h === "CITY", h => h.includes("MAILING CITY")]);
+        const gradesIndex = findColumn(headers, [h => h === "GRADES", h => h.includes("GRADE")]);
+        const levelIndex = findColumn(headers, [h => h.includes("SCHOOL LEVEL") || h === "LEVEL"]);
+
+        for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+            const row = rows[rowIndex];
+            if (!row || !row.length) continue;
+            const schoolName = String(row[schoolIndex] ?? "").trim();
+            if (!schoolName) continue;
+
+            records.push({
+                year: yearLabel,
+                sheet: sheetName,
+                districtCode: districtCodeIndex >= 0 ? normalizeCode(row[districtCodeIndex]) : "",
+                districtName: districtNameIndex >= 0 ? String(row[districtNameIndex] ?? "").trim() : "",
+                schoolCode: schoolCodeIndex >= 0 ? normalizeCode(row[schoolCodeIndex]) : "",
+                schoolName,
+                streetAddress: streetIndex >= 0 ? String(row[streetIndex] ?? "").trim() : "",
+                city: cityIndex >= 0 ? String(row[cityIndex] ?? "").trim() : "",
+                gradesText: gradesIndex >= 0 ? String(row[gradesIndex] ?? "").trim() : "",
+                schoolLevel: levelIndex >= 0 ? String(row[levelIndex] ?? "").trim() : ""
+            });
+        }
+    });
+
+    return deduplicateDirectoryRecords(records);
+}
+
+function deduplicateDirectoryRecords(records) {
+    const map = new Map();
+    records.forEach(record => {
+        const key = record.districtCode && record.schoolCode
+            ? `${record.districtCode}|${record.schoolCode}`
+            : `${normalizeSchoolText(record.districtName)}|${normalizeSchoolText(record.schoolName)}|${record.year}`;
+        if (!map.has(key)) map.set(key, record);
+    });
+    return [...map.values()];
+}
+
+function mergeDirectoryIntoEnrollment(enrollmentRecords, directoryRecords) {
+    const byCode = new Map();
+    const byName = new Map();
+
+    directoryRecords.forEach(record => {
+        if (record.districtCode && record.schoolCode) {
+            byCode.set(`${record.districtCode}|${record.schoolCode}`, record);
+        }
+        byName.set(`${normalizeSchoolText(record.districtName)}|${normalizeSchoolText(record.schoolName)}`, record);
+    });
+
+    return enrollmentRecords.map(record => {
+        const codeMatch = record.districtCode && record.schoolCode
+            ? byCode.get(`${record.districtCode}|${record.schoolCode}`)
+            : null;
+        const nameMatch = byName.get(
+            `${normalizeSchoolText(record.districtName)}|${normalizeSchoolText(record.schoolName)}`
+        );
+        const directory = codeMatch || nameMatch || null;
+
+        return {
+            ...record,
+            directory: directory ? {
+                streetAddress: directory.streetAddress,
+                city: directory.city,
+                gradesText: directory.gradesText,
+                schoolLevel: directory.schoolLevel
+            } : null
+        };
+    });
+}
+
+async function fetchArrayBuffer(url, label) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), EDUCATION_REQUEST_TIMEOUT_MS);
+
+    try {
+        const response = await fetch(`${url}${url.includes("?") ? "&" : "?"}_cb=${Date.now()}`, {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+            headers: {
+                Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, application/octet-stream"
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`${label} returned HTTP ${response.status}.`);
+        }
+
+        const contentType = response.headers.get("content-type") || "";
+        const buffer = await response.arrayBuffer();
+        if (!buffer.byteLength) {
+            throw new Error(`${label} returned an empty file.`);
+        }
+
+        return { buffer, contentType };
+    } catch (error) {
+        if (error?.name === "AbortError") {
+            throw new Error(`${label} request timed out after ${EDUCATION_REQUEST_TIMEOUT_MS / 1000} seconds.`);
+        }
+        if (error?.name === "TypeError") {
+            throw new Error(
+                `The browser could not directly fetch ${label}. ` +
+                "The Iowa Department of Education file may require a Worker proxy if the source blocks cross-origin browser requests."
+            );
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function findBestEducationMatches(osmSchools, currentRecords) {
+    return osmSchools.map(school => {
+        const candidates = currentRecords.map(record => {
+            const match = schoolMatchScore(school, record);
+            return { record, ...match };
+        }).sort((a, b) => b.score - a.score);
+
+        const best = candidates[0] || null;
+        let matchStatus = "no-match";
+        if (best?.score === 100) matchStatus = "exact-name";
+        else if (best?.score >= 85) matchStatus = "close-name";
+        else if (best?.score >= 65) matchStatus = "review";
+
+        return {
+            osmSchool: school,
+            best,
+            alternatives: candidates.slice(1, 3),
+            matchStatus
+        };
+    });
+}
+
+function findHistoricalRecord(currentRecord, comparisonRecords) {
+    if (!currentRecord) return null;
+
+    if (currentRecord.districtCode && currentRecord.schoolCode) {
+        const codeMatch = comparisonRecords.find(record =>
+            record.districtCode === currentRecord.districtCode &&
+            record.schoolCode === currentRecord.schoolCode
+        );
+        if (codeMatch) return codeMatch;
+    }
+
+    const exactName = comparisonRecords.find(record =>
+        normalizeSchoolText(record.schoolName) === normalizeSchoolText(currentRecord.schoolName) &&
+        normalizeSchoolText(record.districtName) === normalizeSchoolText(currentRecord.districtName)
+    );
+
+    if (exactName) return exactName;
+
+    return comparisonRecords.find(record =>
+        normalizeSchoolText(record.schoolName) === normalizeSchoolText(currentRecord.schoolName)
+    ) || null;
+}
+
+function calculateGradeChanges(current, historical) {
+    if (!current || !historical) return {};
+    const grades = new Set([
+        ...Object.keys(current.grades || {}),
+        ...Object.keys(historical.grades || {})
+    ]);
+
+    const changes = {};
+    [...grades].sort((a, b) => {
+        const order = ["PK", "K", ...Array.from({ length: 12 }, (_, i) => String(i + 1))];
+        return order.indexOf(a) - order.indexOf(b);
+    }).forEach(grade => {
+        const currentValue = current.grades?.[grade];
+        const historicalValue = historical.grades?.[grade];
+        if (currentValue === undefined && historicalValue === undefined) return;
+        changes[grade] = {
+            current: currentValue ?? null,
+            historical: historicalValue ?? null,
+            change: currentValue !== undefined && historicalValue !== undefined
+                ? currentValue - historicalValue
+                : null
+        };
+    });
+
+    return changes;
+}
+
+function buildEducationMatchData(osmSchools, currentRecords, comparisonRecords) {
+    return findBestEducationMatches(osmSchools, currentRecords).map(item => {
+        const current = item.best?.record || null;
+        const historical = findHistoricalRecord(current, comparisonRecords);
+        const currentTotal = current?.total ?? null;
+        const historicalTotal = historical?.total ?? null;
+
+        return {
+            ...item,
+            current,
+            historical,
+            totalChange:
+                currentTotal !== null && historicalTotal !== null
+                    ? currentTotal - historicalTotal
+                    : null,
+            percentChange:
+                currentTotal !== null && historicalTotal !== null && historicalTotal !== 0
+                    ? ((currentTotal - historicalTotal) / historicalTotal) * 100
+                    : null,
+            gradeChanges: calculateGradeChanges(current, historical)
+        };
+    });
+}
+
+function formatGradeChanges(gradeChanges) {
+    const entries = Object.entries(gradeChanges || {});
+    if (!entries.length) return "—";
+
+    return entries.map(([grade, values]) => {
+        const c = values.current === null ? "—" : values.current;
+        const h = values.historical === null ? "—" : values.historical;
+        const d = values.change === null ? "—" : (values.change > 0 ? `+${values.change}` : values.change);
+        return `<span>${escapeHtml(grade)}: ${escapeHtml(String(c))} / ${escapeHtml(String(h))} (${escapeHtml(String(d))})</span>`;
+    }).join("; ");
+}
+
+function buildEducationMatchTable(matchData) {
+    if (!matchData.length) {
+        dom.educationMatchTable.innerHTML =
+            `<div class="result waiting"><div class="result-title">No education matches to display</div>` +
+            `<div class="result-message">No OSM school features were returned.</div></div>`;
+        dom.educationMatchTable.hidden = false;
+        return;
+    }
+
+    const rows = matchData.map(item => {
+        const osmName = item.osmSchool.properties?.name || item.osmSchool.properties?.official_name || "(unnamed school)";
+        const current = item.current;
+        const historical = item.historical;
+        const currentTotal = current?.total ?? null;
+        const historicalTotal = historical?.total ?? null;
+        const changeText = item.totalChange === null || item.totalChange === undefined
+            ? "—"
+            : `${item.totalChange > 0 ? "+" : ""}${item.totalChange}` +
+              (item.percentChange === null || item.percentChange === undefined
+                  ? ""
+                  : ` (${item.percentChange > 0 ? "+" : ""}${item.percentChange.toFixed(1)}%)`);
+        const statusText = item.matchStatus === "exact-name"
+            ? "Exact name"
+            : item.matchStatus === "close-name"
+                ? "Close name"
+                : item.matchStatus === "review"
+                    ? "Review"
+                    : "No match";
+        const statusClass = item.matchStatus === "exact-name" || item.matchStatus === "close-name"
+            ? "match-good"
+            : item.matchStatus === "review"
+                ? "match-review"
+                : "match-none";
+        const gradeText = formatGradeChanges(item.gradeChanges);
+
+        return `<tr>` +
+            `<td>${escapeHtml(osmName)}</td>` +
+            `<td>${escapeHtml(current?.schoolName || "—")}</td>` +
+            `<td>${escapeHtml(current?.districtName || "—")}</td>` +
+            `<td class="${statusClass}">${escapeHtml(statusText)}<br><small>${item.best ? `${item.best.score}/100 · ${escapeHtml(item.best.method)}` : ""}</small></td>` +
+            `<td>${currentTotal === null ? "—" : currentTotal.toLocaleString()}</td>` +
+            `<td>${historicalTotal === null ? "—" : historicalTotal.toLocaleString()}</td>` +
+            `<td>${escapeHtml(changeText)}</td>` +
+            `<td class="grade-values">${gradeText}</td>` +
+            `</tr>`;
+    }).join("");
+
+    dom.educationMatchTable.innerHTML =
+        `<div class="school-education-table">` +
+        `<h3>OSM School ↔ Iowa DOE Evidence</h3>` +
+        `<p class="table-note">Current enrollment is 2025-26 and the historical comparison is 2020-21. Grade cells show current / historical (change). Name matching is deterministic test logic, not an AI or final reconciliation decision.</p>` +
+        `<table><thead><tr>` +
+        `<th>OSM School</th><th>DOE School</th><th>District</th><th>Match</th><th>2025-26 Total</th><th>2020-21 Total</th><th>Total Change</th><th>Grade Values</th>` +
+        `</tr></thead><tbody>${rows}</tbody></table></div>`;
+    dom.educationMatchTable.hidden = false;
+}
+
+function updateSchoolEducationUI(data) {
+    const osmSchoolCount = state.osmCollection?.schoolsGeoJSON.features.length || 0;
+    const osmBuildingCount = state.osmCollection?.buildingsGeoJSON.features.length || 0;
+
+    dom.schoolEducationStudyId.textContent = state.currentStudy?.id || "—";
+    dom.schoolEducationOsmSchools.textContent = String(osmSchoolCount);
+    dom.schoolEducationOsmBuildings.textContent = String(osmBuildingCount);
+    dom.schoolEducationCounts.hidden = false;
+    dom.candidateBuildingCount.textContent = String(data.candidates.uniqueCandidateCount);
+    dom.educationCurrentCount.textContent = String(data.currentEnrollment.length);
+    dom.educationComparisonCount.textContent = String(data.comparisonEnrollment.length);
+    dom.schoolEducationLayerControls.hidden = false;
+    dom.educationSourceDetails.hidden = false;
+    dom.candidateBuildingTable.hidden = false;
+    dom.educationMatchTable.hidden = false;
+
+    buildCandidateBuildingTable(data.candidates);
+    buildEducationMatchTable(data.matches);
+}
+
+async function runSchoolEducationTest() {
+    if (!state.studySaved || !state.currentStudy || !state.osmCollection) {
+        showResult(
+            "School/Education Test Not Ready",
+            "Save the study and complete OSM Data Collection before running the school-building and education-data test.",
+            "fail"
+        );
+        return;
+    }
+
+    dom.runSchoolEducationButton.disabled = true;
+    dom.schoolEducationStatus.textContent =
+        "Identifying OSM buildings near the mapped school features...";
+
+    const result = showResult(
+        "School Building + Education Test",
+        "Identifying candidate OSM school buildings...",
+        "running"
+    );
+
+    try {
+        const candidates = identifyCandidateSchoolBuildings();
+        renderSchoolBuildingCandidates(candidates);
+
+        const studyStates = new Set(state.currentStudy.cities.map(city => city.stateAbbr));
+        if (!studyStates.has("IA") || studyStates.size !== 1) {
+            throw new Error(
+                "The OSM candidate-building test completed, but the education portion of Test 3B.5 is currently scoped to Iowa Department of Education data. Run this milestone with an Iowa-only study area."
+            );
+        }
+
+        result.querySelector(".result-message").textContent =
+            "Candidate buildings identified. Fetching the 2025-26 Iowa school building directory...";
+        dom.schoolEducationStatus.textContent =
+            "Candidate buildings identified. Loading the current Iowa Department of Education building directory...";
+
+        const [directoryResponse, currentEnrollmentResponse, comparisonEnrollmentResponse] = await Promise.all([
+            fetchArrayBuffer(EDUCATION_DATA_SOURCES.currentDirectory, "2025-26 Iowa Public School Building Directory"),
+            fetchArrayBuffer(EDUCATION_DATA_SOURCES.currentEnrollment, "2025-26 Public School Building enrollment"),
+            fetchArrayBuffer(EDUCATION_DATA_SOURCES.comparisonEnrollment, "2020-21 Public School Building enrollment")
+        ]);
+
+        result.querySelector(".result-message").textContent =
+            "DOE files retrieved. Parsing building and enrollment records in the browser...";
+        dom.schoolEducationStatus.textContent =
+            "DOE files retrieved. Parsing the building directory and enrollment workbooks in the browser...";
+
+        const directory = parseDirectoryWorkbook(directoryResponse.buffer, "2025-26");
+        const currentEnrollment = mergeDirectoryIntoEnrollment(
+            parseEnrollmentWorkbook(currentEnrollmentResponse.buffer, "2025-26"),
+            directory
+        );
+        const comparisonEnrollment = parseEnrollmentWorkbook(
+            comparisonEnrollmentResponse.buffer,
+            "2020-21"
+        );
+
+        const osmSchools = state.osmCollection.schoolsGeoJSON.features;
+        const matches = buildEducationMatchData(
+            osmSchools,
+            currentEnrollment,
+            comparisonEnrollment
+        );
+
+        state.schoolEducation = {
+            studyId: state.currentStudy.id,
+            candidates,
+            directory,
+            currentEnrollment,
+            comparisonEnrollment,
+            matches,
+            sources: EDUCATION_DATA_SOURCES,
+            retrievedAt: new Date().toISOString()
+        };
+
+        updateSchoolEducationUI(state.schoolEducation);
+
+        dom.schoolEducationStatus.textContent =
+            `School-building and education-data test complete. ${candidates.uniqueCandidateCount} unique OSM building candidates were identified and ${matches.filter(item => item.current).length} of ${matches.length} OSM school features have a deterministic DOE candidate match.`;
+
+        result.className = "result pass";
+        result.querySelector(".result-title").textContent = "✓ School Building + Education Data Loaded";
+        result.querySelector(".result-message").textContent =
+            `Returned ${osmSchools.length} OSM school features, identified ${candidates.uniqueCandidateCount} candidate buildings, ` +
+            `and parsed ${currentEnrollment.length} current and ${comparisonEnrollment.length} comparison DOE enrollment records.`;
+
+        result.appendChild(createDataPre({
+            studyId: state.currentStudy.id,
+            candidateBuildingRadiusMeters: SCHOOL_BUILDING_CANDIDATE_RADIUS_METERS,
+            candidateBuildings: candidates.uniqueCandidateCount,
+            currentEnrollmentRecords: currentEnrollment.length,
+            comparisonEnrollmentRecords: comparisonEnrollment.length,
+            deterministicMatches: matches.filter(item => item.current).length,
+            source: EDUCATION_DATA_SOURCES,
+            persistence: "client-side test output only; education/reconciliation results are not written to GitHub in Test 3B.5"
+        }));
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        dom.schoolEducationStatus.textContent =
+            `Unable to complete school-building and education-data test: ${message}`;
+        result.className = "result fail";
+        result.querySelector(".result-title").textContent = "School Building + Education Test Failed";
+        result.querySelector(".result-message").textContent = message;
+        result.appendChild(createDataPre({
+            stage: "school-building-education",
+            studyId: state.currentStudy.id,
+            sources: EDUCATION_DATA_SOURCES
+        }));
+    } finally {
+        dom.runSchoolEducationButton.disabled = false;
+    }
+}
+
+function revealSchoolEducationCard() {
+    if (!state.studySaved || !state.currentStudy || !state.osmCollection) return;
+    dom.schoolEducationCard.hidden = false;
+    dom.schoolEducationStudyId.textContent = state.currentStudy.id;
+    dom.schoolEducationOsmSchools.textContent = String(state.osmCollection.schoolsGeoJSON.features.length);
+    dom.schoolEducationOsmBuildings.textContent = String(state.osmCollection.buildingsGeoJSON.features.length);
+    dom.schoolEducationStatus.textContent =
+        "OSM data are ready. Run the school-building and Iowa education-data test.";
+}
+
 function resetOsmCollection() {
     state.osmCollection = null;
+    state.schoolEducation = null;
     clearOsmLayers();
     dom.osmCollectionCard.hidden = true;
     dom.osmCounts.hidden = true;
@@ -1671,6 +2614,14 @@ function resetOsmCollection() {
     dom.osmCollectionDetails.hidden = true;
     dom.osmSchoolTable.hidden = true;
     dom.osmDownloads.hidden = true;
+    dom.schoolEducationCard.hidden = true;
+    dom.schoolEducationCounts.hidden = true;
+    dom.schoolEducationLayerControls.hidden = true;
+    dom.educationSourceDetails.hidden = true;
+    dom.candidateBuildingTable.hidden = true;
+    dom.educationMatchTable.hidden = true;
+    dom.runSchoolEducationButton.disabled = false;
+    dom.showSchoolCandidates.checked = true;
     dom.collectOsmButton.disabled = false;
     dom.showOsmBuildings.checked = true;
     dom.showOsmSchools.checked = true;
@@ -1738,6 +2689,8 @@ dom.showOsmBuildings.addEventListener("change", updateOsmLayerVisibility);
 dom.showOsmSchools.addEventListener("change", updateOsmLayerVisibility);
 dom.downloadSchoolsButton.addEventListener("click", downloadOsmSchools);
 dom.downloadBuildingsButton.addEventListener("click", downloadOsmBuildings);
+dom.runSchoolEducationButton.addEventListener("click", runSchoolEducationTest);
+dom.showSchoolCandidates.addEventListener("change", updateSchoolCandidateVisibility);
 
 /* ============================================================
    INITIALIZATION

@@ -18,7 +18,7 @@
         crossorigin=""
     >
 
-    <link rel="stylesheet" href="style.css?v=3B.4">
+    <link rel="stylesheet" href="style.css?v=3B.5">
 </head>
 
 <body>
@@ -28,7 +28,7 @@
     <header class="page-header">
         <h1>Read / Write AI Test</h1>
         <p class="subtitle">
-            Test 3B.4 — OSM Data Collection
+            Test 3B.5 — School Building & Education Data
         </p>
     </header>
 
@@ -344,6 +344,100 @@
 
 
     <!-- ==================================================
+         SCHOOL BUILDING + EDUCATION DATA
+         ================================================== -->
+
+    <section id="schoolEducationCard" class="card" hidden>
+
+        <div class="map-header">
+            <div>
+                <h2>School Building &amp; Education Data</h2>
+                <p id="schoolEducationStatus" class="map-status">
+                    Run the deterministic school-building and Iowa education-data test.
+                </p>
+            </div>
+        </div>
+
+        <p class="section-description">
+            Identify OSM buildings near mapped school features, then load the official
+            Iowa Department of Education public school building directory and building-level
+            enrollment data for the current school year and five years earlier. This milestone
+            presents evidence for review; it does not decide which building is the authoritative
+            school building and does not modify OpenStreetMap.
+        </p>
+
+        <div class="collection-study-summary">
+            <div class="save-summary-item">
+                <strong>Study ID</strong>
+                <span id="schoolEducationStudyId">—</span>
+            </div>
+            <div class="save-summary-item">
+                <strong>OSM Schools</strong>
+                <span id="schoolEducationOsmSchools">—</span>
+            </div>
+            <div class="save-summary-item">
+                <strong>OSM Buildings</strong>
+                <span id="schoolEducationOsmBuildings">—</span>
+            </div>
+        </div>
+
+        <div class="study-actions collection-actions">
+            <button id="runSchoolEducationButton" class="test-button primary" type="button">
+                Run School Building + Education Test
+            </button>
+        </div>
+
+        <div id="schoolEducationCounts" class="osm-counts" hidden>
+            <div class="osm-count">
+                <strong id="candidateBuildingCount">0</strong>
+                <span>Candidate school buildings</span>
+            </div>
+            <div class="osm-count">
+                <strong id="educationCurrentCount">0</strong>
+                <span>Current DOE records</span>
+            </div>
+            <div class="osm-count">
+                <strong id="educationComparisonCount">0</strong>
+                <span>Five-year DOE records</span>
+            </div>
+        </div>
+
+        <div id="schoolEducationLayerControls" class="osm-layer-controls" hidden>
+            <label class="layer-check">
+                <input id="showSchoolCandidates" type="checkbox" checked>
+                <span>Show candidate school buildings</span>
+            </label>
+        </div>
+
+        <div id="educationSourceDetails" class="osm-details" hidden>
+            <div class="osm-detail-row">
+                <strong>DOE source</strong>
+                <span><a href="https://educate.iowa.gov/pk-12/data/education-statistics" target="_blank" rel="noopener">Iowa PK-12 Education Statistics</a></span>
+            </div>
+            <div class="osm-detail-row">
+                <strong>Current data</strong>
+                <span id="educationCurrentSource">2025-26 Public School Building enrollment + directory</span>
+            </div>
+            <div class="osm-detail-row">
+                <strong>Comparison data</strong>
+                <span id="educationComparisonSource">2020-21 Public School Building enrollment</span>
+            </div>
+        </div>
+
+        <div id="candidateBuildingTable" class="osm-school-table" hidden></div>
+
+        <div id="educationMatchTable" class="osm-school-table" hidden></div>
+
+        <div class="future-note">
+            <strong>Review boundary:</strong> this milestone only presents deterministic OSM/DOE evidence.
+            AI-assisted reconciliation, human approval of the actual school building, and persistence
+            of the reviewed reconciliation will be implemented in later milestones.
+        </div>
+
+    </section>
+
+
+    <!-- ==================================================
          TEST RESULTS
          ================================================== -->
 
@@ -358,7 +452,7 @@
                 </div>
 
                 <div class="result-message">
-                    Test 3B.4 collects OpenStreetMap school features and building footprints through Overpass after the study is saved through the Cloudflare Worker and GitHub App.
+                    Test 3B.5 examines OSM school/building data and Iowa Department of Education building-level enrollment data after the study has been saved and OSM data collected. The DOE portion is intentionally scoped to Iowa for this milestone.
                 </div>
             </div>
         </div>
@@ -401,7 +495,7 @@
 
 
     <footer>
-        <p>Test 3B.4 — LandViz Media</p>
+        <p>Test 3B.5 — LandViz Media</p>
     </footer>
 
 </main>
@@ -414,7 +508,8 @@
     crossorigin=""
 ></script>
 
-<script src="app.js?v=3B.4"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="app.js?v=3B.5"></script>
 
 </body>
 </html>
