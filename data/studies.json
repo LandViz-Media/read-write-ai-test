@@ -250,5 +250,68 @@
       "geocodedAt": "2026-09-21T20:41:38.305Z",
       "mapReviewedBeforeSave": true
     }
+  },
+  {
+    "id": "study-20260921-154355-c49e7b29",
+    "name": "Ogden - Beaver Test 1",
+    "application": "osm-scout",
+    "created": "2026-09-21T20:43:55.385Z",
+    "updated": "2026-09-21T20:43:57.943Z",
+    "status": "study-area-created",
+    "cities": [
+      {
+        "input": "Ogden, IA",
+        "name": "Ogden",
+        "state": "Iowa",
+        "stateAbbr": "IA",
+        "country": "United States",
+        "latitude": 42.0394789,
+        "longitude": -94.0282882,
+        "displayName": "Ogden city",
+        "geocoder": "U.S. Census Bureau TIGERweb",
+        "censusVintage": "2026",
+        "censusLayer": "Incorporated Place",
+        "censusLayerId": 4,
+        "censusGEOID": "1958665",
+        "censusPlaceCode": "58665",
+        "censusPlaceClassCode": "C1"
+      },
+      {
+        "input": "Beaver, IA",
+        "name": "Beaver",
+        "state": "Iowa",
+        "stateAbbr": "IA",
+        "country": "United States",
+        "latitude": 42.0382601,
+        "longitude": -94.1399799,
+        "displayName": "Beaver city",
+        "geocoder": "U.S. Census Bureau TIGERweb",
+        "censusVintage": "2026",
+        "censusLayer": "Incorporated Place",
+        "censusLayerId": 4,
+        "censusGEOID": "1905185",
+        "censusPlaceCode": "05185",
+        "censusPlaceClassCode": "C1"
+      }
+    ],
+    "buffer": {
+      "distance": 1,
+      "units": "miles"
+    },
+    "studyArea": {
+      "method": "city-extent-buffer",
+      "extent": {
+        "minLatitude": 42.023778846380466,
+        "maxLatitude": 42.05396015361954,
+        "minLongitude": -94.15947826360079,
+        "maxLongitude": -94.00878983639922
+      }
+    },
+    "provenance": {
+      "geocoder": "U.S. Census Bureau TIGERweb",
+      "censusVintage": "2026",
+      "geocodedAt": "2026-09-21T20:43:55.385Z",
+      "mapReviewedBeforeSave": true
+    }
   }
 ]

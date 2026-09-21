@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "name": "study-20260921-154355-c49e7b29",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "studyId": "study-20260921-154355-c49e7b29",
+        "studyName": "Ogden - Beaver Test 1",
+        "application": "osm-scout",
+        "method": "city-extent-buffer",
+        "bufferDistance": 1,
+        "bufferUnits": "miles"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -94.15947826360079,
+              42.023778846380466
+            ],
+            [
+              -94.00878983639922,
+              42.023778846380466
+            ],
+            [
+              -94.00878983639922,
+              42.05396015361954
+            ],
+            [
+              -94.15947826360079,
+              42.05396015361954
+            ],
+            [
+              -94.15947826360079,
+              42.023778846380466
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}
