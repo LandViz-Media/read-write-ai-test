@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "name": "study-20260921-101356-457f59b2",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "studyId": "study-20260921-101356-457f59b2",
+        "studyName": "Ogden – Jefferson OSM test",
+        "application": "osm-scout",
+        "method": "city-extent-buffer",
+        "bufferDistance": 1,
+        "bufferUnits": "miles"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -94.39891771671996,
+              42.003261646380466
+            ],
+            [
+              -94.00879298328005,
+              42.003261646380466
+            ],
+            [
+              -94.00879298328005,
+              42.05396015361954
+            ],
+            [
+              -94.39891771671996,
+              42.05396015361954
+            ],
+            [
+              -94.39891771671996,
+              42.003261646380466
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}
